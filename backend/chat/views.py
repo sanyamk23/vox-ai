@@ -14,12 +14,12 @@ def initiate_call(request):
             jd = data.get('jd', 'Software Engineer role')
             name = data.get('name', 'Candidate')
             
-            account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-            auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-            from_number = os.getenv('TWILIO_PHONE_NUMBER')
+            account_sid = os.getenv('TWILIO_ACCOUNT_SID', '').strip()
+            auth_token = os.getenv('TWILIO_AUTH_TOKEN', '').strip()
+            from_number = os.getenv('TWILIO_PHONE_NUMBER', '').strip()
             
-            print(f"[DEBUG] SID: {account_sid}")
-            print(f"[DEBUG] From: {from_number}")
+            print(f"[DEBUG] SID: '{account_sid}'")
+            print(f"[DEBUG] From: '{from_number}'")
             public_url = os.getenv('PUBLIC_URL', request.get_host())
             if 'ngrok_url_here' in public_url:
                 return JsonResponse({"status": "error", "message": "Ngrok URL not set in .env. Twilio cannot reach localhost."}, status=400)
