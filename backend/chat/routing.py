@@ -1,7 +1,12 @@
+"""
+WebSocket URL routing.
+
+Both consumers now live in consumers.py (DRY — no separate twilio_consumer.py).
+"""
 from django.urls import re_path
-from . import consumers, twilio_consumer
+from .consumers import VoiceConsumer, TwilioConsumer
 
 websocket_urlpatterns = [
-    re_path(r'ws/voice/', consumers.VoiceConsumer.as_asgi()),
-    re_path(r'ws/twilio/', twilio_consumer.TwilioConsumer.as_asgi()),
+    re_path(r"ws/voice/", VoiceConsumer.as_asgi()),
+    re_path(r"ws/twilio/", TwilioConsumer.as_asgi()),
 ]

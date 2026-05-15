@@ -12,6 +12,7 @@ const VoiceChat = () => {
     const [jd, setJd] = useState("We are looking for a Senior Software Engineer proficient in React and Django.");
     const [phone, setPhone] = useState("+1");
     const [name, setName] = useState("");
+    const [company, setCompany] = useState("");
     
     const socketRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -30,7 +31,7 @@ const VoiceChat = () => {
                 const resp = await fetch('http://localhost:8000/api/call/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, jd, name })
+                    body: JSON.stringify({ phone, jd, name, company })
                 });
                 const res = await resp.json();
                 if (res.status === 'success') {
@@ -46,7 +47,7 @@ const VoiceChat = () => {
         }
 
         // Web Flow
-        const wsUrl = `ws://localhost:8000/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}`;
+        const wsUrl = `ws://localhost:8000/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&company=${encodeURIComponent(company)}`;
         socketRef.current = new WebSocket(wsUrl);
 
         socketRef.current.onopen = async () => {
@@ -179,11 +180,21 @@ const VoiceChat = () => {
                         <h2 className="font-semibold text-slate-200">Job Description</h2>
                     </div>
                     <textarea 
-                        className="w-full h-40 bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all resize-none mb-6"
+                        className="w-full h-40 bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all resize-none mb-4"
                         placeholder="Paste Job Description here..."
                         value={jd}
                         onChange={(e) => setJd(e.target.value)}
                     />
+                    <div className="relative mb-6">
+                        <Briefcase size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input 
+                            type="text" 
+                            className="w-full bg-slate-950/50 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                            placeholder="Company Name (e.g. Acme Corp)"
+                            value={company}
+                            onChange={(e) => setCompany(e.target.value)}
+                        />
+                    </div>
 
                     <div className="flex items-center gap-2 mb-4">
                         <User size={18} className="text-blue-500" />
