@@ -11,5 +11,5 @@ opentelemetry-exporter-otlp
 psycopg2-binary
 dj-database-url
 python-dotenv
-twilio
+twilio==9.10.0
 django-cors-headers

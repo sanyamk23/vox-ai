@@ -9,7 +9,9 @@ class TwilioConsumer(AsyncWebsocketConsumer):
     """
     async def connect(self):
         try:
-            print("[Twilio] Incoming Call Stream Connecting...")
+            await self.accept()
+            print("[Twilio] Incoming Call Stream Connected.")
+            
             query_params = self.scope.get('query_string', b'').decode()
             jd = None
             name = None
