@@ -1,0 +1,15 @@
+django>=4.2
+channels[daphne]>=4.0
+channels-redis>=4.1
+deepgram-sdk>=3.0
+groq>=0.9
+aiohttp>=3.9
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-django
+opentelemetry-exporter-otlp
+psycopg2-binary
+dj-database-url
+python-dotenv
+twilio
+django-cors-headers

@@ -1,0 +1,32 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+db.sqlite3
+.DS_Store
+
+# Node / React
+node_modules/
+dist/
+dist-ssr/
+*.local
+frontend/node_modules/
+
+# Docker
+.docker_data/
+postgres_data/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
