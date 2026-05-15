@@ -11,6 +11,7 @@ const VoiceChat = () => {
     // Command Center State
     const [jd, setJd] = useState("We are looking for a Senior Software Engineer proficient in React and Django.");
     const [phone, setPhone] = useState("+1");
+    const [name, setName] = useState("");
     
     const socketRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -29,11 +30,11 @@ const VoiceChat = () => {
                 const resp = await fetch('http://localhost:8000/api/call/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, jd })
+                    body: JSON.stringify({ phone, jd, name })
                 });
                 const res = await resp.json();
                 if (res.status === 'success') {
-                    setTranscripts([{ role: 'system', text: `Initiating Phone Call to ${phone}...` }]);
+                    setTranscripts([{ role: 'system', text: `Initiating Phone Call to ${name} (${phone})...` }]);
                 } else {
                     alert("Error initiating call: " + res.message);
                 }
@@ -45,7 +46,7 @@ const VoiceChat = () => {
         }
 
         // Web Flow
-        const wsUrl = `ws://localhost:8000/ws/voice/?jd=${encodeURIComponent(jd)}`;
+        const wsUrl = `ws://localhost:8000/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}`;
         socketRef.current = new WebSocket(wsUrl);
 
         socketRef.current.onopen = async () => {
@@ -188,15 +189,27 @@ const VoiceChat = () => {
                         <User size={18} className="text-blue-500" />
                         <h2 className="font-semibold text-slate-200">Candidate Details</h2>
                     </div>
-                    <div className="relative mb-6">
-                        <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                        <input 
-                            type="text" 
-                            className="w-full bg-slate-950/50 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-                            placeholder="Candidate Phone (+1...)"
-                            value={phone}
-                            onChange={(e) => setPhone(e.target.value)}
-                        />
+                    <div className="space-y-4 mb-6">
+                        <div className="relative">
+                            <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-950/50 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                                placeholder="Candidate Name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                            />
+                        </div>
+                        <div className="relative">
+                            <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-950/50 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-sm text-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                                placeholder="Candidate Phone (+1...)"
+                                value={phone}
+                                onChange={(e) => setPhone(e.target.value)}
+                            />
+                        </div>
                     </div>
 
                     <div className="space-y-3">

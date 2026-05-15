@@ -12,9 +12,10 @@ from deepgram import AsyncDeepgramClient
 tracer = trace.get_tracer(__name__)
 
 class VoiceAgent:
-    def __init__(self, consumer, session_id="default", job_description=None):
+    def __init__(self, consumer, session_id="default", job_description=None, candidate_name=None):
         self.consumer = consumer
         self.session_id = session_id
+        self.candidate_name = candidate_name or "Candidate"
         self.job_description = job_description or "Software Engineer at a high-growth startup."
         self.is_interrupted = False
         self.current_llm_task = None
@@ -86,7 +87,7 @@ class VoiceAgent:
             raise e
 
     async def initial_greeting(self):
-        greeting = "Hi, I'm Vox from the recruitment team. Is now a good time for a quick chat?"
+        greeting = f"Hi {self.candidate_name}, I'm Vox from the recruitment team. Is now a good time for a quick chat?"
         await self.consumer.send_transcript("vox", greeting)
         await self.send_to_tts(greeting)
         self.chat_history.append({"role": "assistant", "content": greeting})

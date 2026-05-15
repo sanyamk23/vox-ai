@@ -7,13 +7,16 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         print("[WebSocket] Connecting...")
         query_params = self.scope.get('query_string', b'').decode()
         jd = None
+        name = None
         if 'jd=' in query_params:
-            jd = query_params.split('jd=')[1].split('&')[0]
             from urllib.parse import unquote
-            jd = unquote(jd)
+            jd = unquote(query_params.split('jd=')[1].split('&')[0])
+        if 'name=' in query_params:
+            from urllib.parse import unquote
+            name = unquote(query_params.split('name=')[1].split('&')[0])
 
         await self.accept()
-        self.agent = VoiceAgent(self, job_description=jd)
+        self.agent = VoiceAgent(self, job_description=jd, candidate_name=name)
         await self.agent.start_pipeline()
         await self.agent.initial_greeting()
         print("[WebSocket] Connected.")

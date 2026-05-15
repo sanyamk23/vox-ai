@@ -12,10 +12,14 @@ def initiate_call(request):
             data = json.loads(request.body)
             to_number = data.get('phone')
             jd = data.get('jd', 'Software Engineer role')
+            name = data.get('name', 'Candidate')
             
             account_sid = os.getenv('TWILIO_ACCOUNT_SID')
             auth_token = os.getenv('TWILIO_AUTH_TOKEN')
             from_number = os.getenv('TWILIO_PHONE_NUMBER')
+            
+            print(f"[DEBUG] SID: {account_sid}")
+            print(f"[DEBUG] From: {from_number}")
             public_url = os.getenv('PUBLIC_URL', request.get_host())
             if 'ngrok_url_here' in public_url:
                 return JsonResponse({"status": "error", "message": "Ngrok URL not set in .env. Twilio cannot reach localhost."}, status=400)
@@ -28,7 +32,7 @@ def initiate_call(request):
             client = Client(account_sid, auth_token)
             
             # Perfect Path Construction
-            full_ws_url = f"{stream_url}/ws/twilio/?jd={quote(jd)}"
+            full_ws_url = f"{stream_url}/ws/twilio/?jd={quote(jd)}&name={quote(name)}"
             twiml = f'<Response><Connect><Stream url="{full_ws_url}" /></Connect></Response>'
             
             call = client.calls.create(
