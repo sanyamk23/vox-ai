@@ -109,7 +109,7 @@ class VoiceAgent:
         self.groq_key      = os.getenv("GROQ_API_KEY", "")
         self.sarvam_key    = os.getenv("SARVAM_API_KEY", "")
         self.sarvam_speaker = os.getenv("SARVAM_SPEAKER", _DEFAULT_SARVAM_SPEAKER).strip().lower()
-        self.sarvam_model  = os.getenv("SARVAM_MODEL", "bulbul:v2").strip()
+        self.sarvam_model  = os.getenv("SARVAM_MODEL", "bulbul:v3").strip()
         self.el_key        = os.getenv("ELEVENLABS_API_KEY", "")
         self.el_voice_id   = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
@@ -668,7 +668,9 @@ NON-NEGOTIABLE RULES:
 
     async def _tts_sarvam(self, text: str) -> bool:
         lang_code = "hi-IN" if _DEVANAGARI_RE.search(text) else "en-IN"
-        codec, rate = ("mulaw", 8000) if self.encoding == "mulaw" else ("mp3", 22050)
+        is_mulaw  = self.encoding == "mulaw"
+        codec     = "mulaw" if is_mulaw else "mp3"
+        rate      = 8000    if is_mulaw else 22050
         body = {
             "text": text,
             "target_language_code": lang_code,
@@ -677,6 +679,7 @@ NON-NEGOTIABLE RULES:
             "enable_preprocessing": True,
             "output_audio_codec": codec,
             "speech_sample_rate": rate,
+            "pace": 1.1,
         }
         headers = {
             "api-subscription-key": self.sarvam_key,
@@ -684,27 +687,40 @@ NON-NEGOTIABLE RULES:
         }
         try:
             async with aiohttp.ClientSession(timeout=_TTS_TIMEOUT) as s:
-                async with s.post("https://api.sarvam.ai/text-to-speech", json=body, headers=headers) as r:
-                    if r.status == 200:
-                        data   = await r.json()
-                        audios = data.get("audios") or []
-                        if not audios or not audios[0]:
-                            print("[Sarvam] Empty audio")
-                            return False
-                        audio = base64.b64decode(audios[0])
-                        if codec == "mulaw" and audio[:4] == b"RIFF":
-                            print("[Sarvam] Got WAV instead of raw mulaw — falling back")
-                            return False
-                        if not self.is_interrupted and audio:
-                            await self.consumer.send_audio(audio)
-                        return True
-                    elif r.status == 429:
-                        print("[Sarvam] Rate limited")
+                async with s.post(
+                    "https://api.sarvam.ai/text-to-speech/stream",
+                    json=body, headers=headers,
+                ) as r:
+                    if r.status != 200:
+                        if r.status == 429:
+                            print("[Sarvam] Rate limited")
+                        else:
+                            err = await r.text()
+                            print(f"[Sarvam] {r.status}: {err[:200]}")
                         return False
+
+                    if is_mulaw:
+                        # Twilio mulaw: each 320-byte frame (40ms) is independently playable.
+                        # Stream chunks as they arrive — lower perceived latency.
+                        sent = False
+                        async for chunk in r.content.iter_chunked(320):
+                            if self.is_interrupted:
+                                return True
+                            if chunk:
+                                await self.consumer.send_audio(chunk)
+                                sent = True
+                        return sent
                     else:
-                        err = await r.text()
-                        print(f"[Sarvam] {r.status}: {err[:200]}")
-                        return False
+                        # Web client: browser's decodeAudioData needs a complete MP3 file.
+                        # Buffer the full stream, then send once.
+                        buf = bytearray()
+                        async for chunk in r.content.iter_chunked(8192):
+                            buf.extend(chunk)
+                        if buf and not self.is_interrupted:
+                            await self.consumer.send_audio(bytes(buf))
+                            return True
+                        return bool(buf)
+
         except asyncio.TimeoutError:
             print("[Sarvam] Timeout")
             return False
