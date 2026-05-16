@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Phone, Mic, Square, Activity, Briefcase, User,
+  Phone, Square, Activity, Briefcase, User,
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
+  Copy, TrendingUp, Heart, Package, Code2,
 } from 'lucide-react';
 
-// ── Outcome config (light-theme safe colours) ─────────────────────────────────
+// ── Outcome config ─────────────────────────────────────────────────────────────
 const OUTCOME = {
   INTERESTED:         { label: 'Interested',         cls: 'text-emerald-700 bg-emerald-50 border-emerald-200', Icon: CheckCircle },
   CALLBACK_REQUESTED: { label: 'Callback Requested', cls: 'text-indigo-700  bg-indigo-50  border-indigo-200',  Icon: Phone },
@@ -16,25 +17,70 @@ const OUTCOME = {
 const scoreColor = (s) => s >= 8 ? '#059669' : s >= 5 ? '#d97706' : '#dc2626';
 const scoreBg    = (s) => s >= 8 ? 'rgba(16,185,129,0.08)' : s >= 5 ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
 const scoreBd    = (s) => s >= 8 ? 'rgba(16,185,129,0.22)' : s >= 5 ? 'rgba(245,158,11,0.22)' : 'rgba(239,68,68,0.22)';
+const confLabel  = (c) => c == null ? null : c >= 0.7 ? 'High' : c >= 0.4 ? 'Medium' : 'Low';
+const confColor  = (c) => c == null ? '#94a3b8' : c >= 0.7 ? '#059669' : c >= 0.4 ? '#d97706' : '#dc2626';
+
+const DIMS = [
+  { key: 'technical_fit',  label: 'Technical',    Icon: Code2,         color: '#6366f1', bg: 'rgba(99,102,241,0.07)',  bd: 'rgba(99,102,241,0.18)' },
+  { key: 'communication',  label: 'Communication', Icon: MessageSquare, color: '#8b5cf6', bg: 'rgba(139,92,246,0.07)', bd: 'rgba(139,92,246,0.18)' },
+  { key: 'motivation_fit', label: 'Motivation',   Icon: Heart,         color: '#059669', bg: 'rgba(5,150,105,0.07)',  bd: 'rgba(5,150,105,0.18)' },
+  { key: 'logistics_fit',  label: 'Logistics',    Icon: Package,       color: '#d97706', bg: 'rgba(217,119,6,0.07)',  bd: 'rgba(217,119,6,0.18)' },
+];
+
+function buildExportText(report, name) {
+  const cf = report.overall_confidence;
+  const lines = [
+    '═══════════════════════════════════════',
+    '           VOX SCREENING REPORT        ',
+    '═══════════════════════════════════════',
+    `Candidate  : ${name || 'Unknown'}`,
+    `Score      : ${report.score ?? '—'}/10`,
+    `Outcome    : ${OUTCOME[report.call_outcome]?.label ?? report.call_outcome ?? '—'}`,
+    cf != null ? `Confidence : ${confLabel(cf)} (${Math.round(cf * 100)}%)` : '',
+    '',
+    report.vibe_check ? `"${report.vibe_check}"` : '',
+    '',
+    '─── Summary ────────────────────────────',
+    ...(report.summary_bullets || []).map(b => `  • ${b}`),
+    '',
+    '─── Skills Verified ────────────────────',
+    `  ${(report.skills_verified || []).join(', ') || 'None mentioned'}`,
+    '',
+    '─── Key Metrics ────────────────────────',
+    report.salary_expectation_lpa != null ? `  Expected CTC : ${report.salary_expectation_lpa} LPA` : '',
+    report.current_ctc_lpa != null        ? `  Current CTC  : ${report.current_ctc_lpa} LPA`        : '',
+    report.notice_period_days != null     ? `  Notice Period: ${report.notice_period_days} days`     : '',
+    report.joining_timeline               ? `  Joining      : ${report.joining_timeline}`            : '',
+    report.other_offers != null           ? `  Other Offers : ${report.other_offers ? 'Yes' : 'No'}` : '',
+    '',
+    '─── Dimension Scores ───────────────────',
+    ...DIMS.map(d => {
+      const dim = report[d.key];
+      return dim ? `  ${d.label.padEnd(14)}: ${dim.score}/10 (confidence ${Math.round((dim.confidence ?? 0) * 100)}%)` : '';
+    }).filter(Boolean),
+    '',
+    ...(report.hr_flags?.length ? [
+      '─── HR Flags ───────────────────────────',
+      ...(report.hr_flags || []).map(f => `  ⚠  ${f}`),
+      '',
+    ] : []),
+    ...(report.recommended_next_step ? [
+      '─── Recommended Action ─────────────────',
+      `  ${report.recommended_next_step}`,
+      '',
+    ] : []),
+    '═══════════════════════════════════════',
+  ].filter(l => l != null);
+  return lines.join('\n');
+}
 
 // ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
-const WS_BASE  = API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 const jsonTry = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmt     = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
-
-function floatTo16BitPCM(input) {
-  const buf  = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buf);
-  for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-  return buf;
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function VoiceChat() {
@@ -44,20 +90,10 @@ export default function VoiceChat() {
   const [jd,       setJd]       = useState('We are looking for a Senior Software Engineer proficient in React and Django.');
   const [phone,    setPhone]    = useState('+91');
   const [name,     setName]     = useState('');
-  const [bars,     setBars]     = useState(Array(40).fill(0));
-  const [aiSpeaks, setAiSpeaks] = useState(false);
   const [elapsed,  setElapsed]  = useState(0);
 
-  const wsRef       = useRef(null);
-  const audioCtxRef = useRef(null);
-  const procRef     = useRef(null);
-  const streamRef   = useRef(null);
-  const analyserRef = useRef(null);
-  const rafRef      = useRef(null);
-  const audioQ      = useRef([]);
-  const playing     = useRef(false);
-  const endRef      = useRef(null);
-  const timerRef    = useRef(null);
+  const endRef   = useRef(null);
+  const timerRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -70,99 +106,6 @@ export default function VoiceChat() {
     }
     return () => clearInterval(timerRef.current);
   }, [status]);
-
-  const startWaveform = useCallback(() => {
-    const tick = () => {
-      if (!analyserRef.current) return;
-      const d = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(d);
-      const N = 40, step = Math.max(1, Math.floor(d.length / N));
-      setBars(Array.from({ length: N }, (_, i) => d[i * step] / 255));
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    tick();
-  }, []);
-
-  const playNext = useCallback(async () => {
-    if (!audioQ.current.length) { playing.current = false; setAiSpeaks(false); return; }
-    playing.current = true; setAiSpeaks(true);
-    const buf = audioQ.current.shift();
-    try {
-      const decoded = await audioCtxRef.current.decodeAudioData(buf);
-      const src = audioCtxRef.current.createBufferSource();
-      src.buffer = decoded;
-      src.connect(audioCtxRef.current.destination);
-      src.onended = playNext;
-      src.start(0);
-    } catch { playNext(); }
-  }, []);
-
-  const startMic = useCallback(async () => {
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      alert('Microphone access denied. Please allow microphone access and try again.');
-      cleanup();
-      setStatus('idle');
-      return;
-    }
-    streamRef.current = stream;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    audioCtxRef.current = ctx;
-    const source  = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 128;
-    analyserRef.current = analyser;
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    procRef.current = proc;
-    proc.onaudioprocess = (e) => {
-      const pcm = floatTo16BitPCM(e.inputBuffer.getChannelData(0));
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(pcm);
-    };
-    source.connect(analyser);
-    analyser.connect(proc);
-    proc.connect(ctx.destination);
-    startWaveform();
-  }, [startWaveform]);
-
-  const cleanup = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
-    wsRef.current?.close();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    procRef.current?.disconnect();
-    audioCtxRef.current?.close().catch(() => {});
-    playing.current = false;
-    audioQ.current  = [];
-    setBars(Array(40).fill(0));
-    setAiSpeaks(false);
-  }, []);
-
-  const endSession = useCallback(() => { cleanup(); setStatus('ended'); }, [cleanup]);
-
-  const startWeb = useCallback(async () => {
-    setStatus('connecting'); setMessages([]); setRecap(null);
-    const url = `${WS_BASE}/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onopen    = () => { /* wait for Gemini ready before mic */ };
-    ws.onmessage = async (e) => {
-      if (typeof e.data === 'string') {
-        const d = jsonTry(e.data);
-        if      (d.type === 'ready')      { setStatus('connected'); await startMic(); }
-        else if (d.type === 'error')     { alert(d.message || 'Session failed to start'); cleanup(); setStatus('idle'); }
-        else if (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
-        else if (d.type === 'interrupt')  { audioQ.current = []; setAiSpeaks(false); }
-        else if (d.type === 'recap')      { setRecap(d.data); cleanup(); setStatus('ended'); }
-      } else {
-        const ab = await e.data.arrayBuffer();
-        audioQ.current.push(ab);
-        if (!playing.current) playNext();
-      }
-    };
-    ws.onclose = () => { if (wsRef.current) { cleanup(); setStatus(s => s === 'connected' ? 'ended' : s); } };
-    ws.onerror = () => { cleanup(); setStatus('idle'); };
-  }, [jd, name, phone, startMic, cleanup, playNext]);
 
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
@@ -184,24 +127,24 @@ export default function VoiceChat() {
     return { ...d, score: recap.score ?? d.intent_score };
   })() : null;
 
-  const isIdle = status === 'idle';
-  const isLive = status === 'connected';
-  const isBusy = status === 'connecting';
-  const isDone = status === 'ended';
+  const isIdle  = status === 'idle';
+  const isLive  = status === 'connected';
+  const isBusy  = status === 'connecting';
+  const isDone  = status === 'ended';
 
   // ── Status pill config ──────────────────────────────────────────────────────
   const pill = isLive
-    ? { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a', dot: '#22c55e', label: 'Session Live',  pulse: true }
+    ? { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a', dot: '#22c55e', label: 'Call In Progress', pulse: true  }
     : isBusy
-    ? { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309', dot: '#f59e0b', label: 'Connecting…',   pulse: true }
+    ? { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309', dot: '#f59e0b', label: 'Initiating…',      pulse: true  }
     : isDone
-    ? { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b', dot: '#94a3b8', label: 'Session Ended', pulse: false }
-    : { bg: '#f8fafc', bd: '#e2e8f0', tx: '#94a3b8', dot: '#cbd5e1', label: 'Ready',         pulse: false };
+    ? { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b', dot: '#94a3b8', label: 'Session Ended',    pulse: false }
+    : { bg: '#f8fafc', bd: '#e2e8f0', tx: '#94a3b8', dot: '#cbd5e1', label: 'Ready',            pulse: false };
 
   return (
     <div className="min-h-screen flex flex-col">
 
-      {/* ── Ambient orbs (very subtle in light mode) ── */}
+      {/* ── Ambient orbs ── */}
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none" aria-hidden>
         <div className="absolute -top-[10%] left-[5%]  w-[800px] h-[800px] rounded-full opacity-60"
           style={{ background: 'radial-gradient(circle, rgba(199,210,254,0.55) 0%, transparent 65%)', animation: 'drift1 16s ease-in-out infinite' }} />
@@ -213,7 +156,6 @@ export default function VoiceChat() {
 
       {/* ── Navigation ── */}
       <header className="glass-nav sticky top-0 z-30 flex items-center justify-between px-6 py-3">
-        {/* Brand */}
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
             style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', boxShadow: '0 4px 16px rgba(99,102,241,0.30)' }}>
@@ -225,12 +167,10 @@ export default function VoiceChat() {
           </div>
         </div>
 
-        {/* Right side */}
         <div className="flex items-center gap-4">
           {isLive && (
             <span className="text-[12px] font-mono font-semibold text-slate-500 tabular-nums tracking-tight">{fmt(elapsed)}</span>
           )}
-          {/* Status pill */}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold border select-none"
             style={{
               background: pill.bg, borderColor: pill.bd, color: pill.tx,
@@ -281,30 +221,22 @@ export default function VoiceChat() {
             </div>
           </section>
 
-          {/* CTA buttons */}
+          {/* CTA */}
           <div className="space-y-2">
             {isLive ? (
-              <button onClick={endSession}
-                className="btn-danger w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                <Square size={14} fill="currentColor" />
-                End Session
-              </button>
+              <div className="w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2 text-slate-400 border border-dashed border-slate-200 select-none">
+                <PhoneCall size={14} className="text-emerald-500" />
+                Call in progress…
+              </div>
             ) : (
-              <>
-                <button onClick={startWeb} disabled={isBusy}
-                  className="btn-primary w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                  {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-                  {isBusy ? 'Initializing…' : 'Start Web Session'}
-                </button>
-                <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
-                  className="btn-ghost w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                  <PhoneCall size={14} />
-                  Trigger Outbound Call
-                </button>
-              </>
+              <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
+                className="btn-primary w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+                {isBusy ? <Loader2 size={14} className="animate-spin" /> : <PhoneCall size={14} />}
+                {isBusy ? 'Initiating Call…' : 'Trigger Outbound Call'}
+              </button>
             )}
-            {isDone && (
-              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); }}
+            {(isLive || isDone) && (
+              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); }}
                 className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
                 ↺ New Session
               </button>
@@ -316,8 +248,9 @@ export default function VoiceChat() {
             <Label icon={<Sparkles size={12} />}>AI Stack</Label>
             <div className="mt-3 space-y-2">
               {[
-                { label: 'Brain', value: 'Gemini Live' },
-                { label: 'Persona', value: 'Priya · HR screening' },
+                { label: 'Brain',    value: 'Gemini Live' },
+                { label: 'Persona',  value: 'Priya · HR screening' },
+                { label: 'Channel',  value: 'Outbound call' },
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between">
                   <span className="text-[11px] font-medium text-slate-400">{label}</span>
@@ -328,30 +261,16 @@ export default function VoiceChat() {
           </section>
         </aside>
 
-        {/* ═══ CENTER — Chat ═══ */}
+        {/* ═══ CENTER — Log ═══ */}
         <section className="col-span-12 lg:col-span-6">
           <div className="glass rounded-2xl flex flex-col" style={{ minHeight: 640 }}>
 
             {/* Chat header */}
-            <div className="px-5 py-4 flex items-center justify-between border-b border-black/[0.05]">
-              <div className="flex items-center gap-2">
-                <MessageSquare size={13} className="text-indigo-500" />
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Live Screening Log
-                </span>
-              </div>
-              {aiSpeaks && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-indigo-600">Speaking</span>
-                  <div className="flex items-end gap-[2px]" style={{ height: 16 }}>
-                    {Array.from({ length: 5 }, (_, i) => (
-                      <div key={i} className="w-[2.5px] rounded-full bg-indigo-500"
-                        style={{ height: '100%', transformOrigin: 'bottom',
-                          animation: `voxBar 0.7s ease-in-out ${i * 0.1}s infinite` }} />
-                    ))}
-                  </div>
-                </div>
-              )}
+            <div className="px-5 py-4 flex items-center gap-2 border-b border-black/[0.05]">
+              <MessageSquare size={13} className="text-indigo-500" />
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Call Log
+              </span>
             </div>
 
             {/* Messages */}
@@ -360,83 +279,34 @@ export default function VoiceChat() {
                 <div className="h-full flex flex-col items-center justify-center gap-4 select-none" style={{ minHeight: 340 }}>
                   <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
                     style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.10))', border: '1px solid rgba(99,102,241,0.14)' }}>
-                    <Zap size={22} className="text-indigo-500" />
+                    <PhoneCall size={22} className="text-indigo-500" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-400">Ready to Screen</p>
-                    <p className="text-xs text-slate-300 mt-1.5">Configure the role above and start a session.</p>
+                    <p className="text-sm font-semibold text-slate-400">Ready to Call</p>
+                    <p className="text-xs text-slate-300 mt-1.5">Fill in the candidate details and trigger an outbound call.</p>
                   </div>
                 </div>
               ) : (
-                messages.map((m, i) => {
-                  if (m.role === 'system') return (
-                    <div key={i} className="flex justify-center msg-in">
-                      <div className="text-[11px] text-slate-400 italic px-4 py-1.5 rounded-full"
-                        style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.11)' }}>
-                        {m.text}
-                      </div>
+                messages.map((m, i) => (
+                  <div key={i} className="flex justify-center msg-in">
+                    <div className="text-[11px] text-slate-400 italic px-4 py-1.5 rounded-full"
+                      style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.11)' }}>
+                      {m.text}
                     </div>
-                  );
-
-                  const isVox = m.role === 'vox';
-                  return (
-                    <div key={i} className={`flex gap-2.5 msg-in ${isVox ? '' : 'flex-row-reverse'}`}>
-                      {/* Avatar */}
-                      <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-[11px] font-bold mt-0.5"
-                        style={isVox
-                          ? { background: 'linear-gradient(135deg, rgba(99,102,241,0.14), rgba(139,92,246,0.14))', border: '1px solid rgba(99,102,241,0.22)', color: '#6366f1' }
-                          : { background: 'rgba(15,23,42,0.06)', border: '1px solid rgba(15,23,42,0.10)', color: '#475569' }
-                        }>
-                        {isVox ? 'V' : (name?.[0]?.toUpperCase() || 'C')}
-                      </div>
-
-                      <div className="max-w-[76%]">
-                        {/* Meta */}
-                        <div className={`flex items-baseline gap-2 mb-1.5 ${isVox ? '' : 'flex-row-reverse'}`}>
-                          <span className="text-[11px] font-semibold" style={{ color: isVox ? '#6366f1' : '#475569' }}>
-                            {isVox ? 'Vox' : (name || 'Candidate')}
-                          </span>
-                          <span className="text-[10px] text-slate-300">{m.time}</span>
-                        </div>
-                        {/* Bubble */}
-                        <div className="px-4 py-3 rounded-2xl text-[13px] leading-relaxed"
-                          style={isVox
-                            ? { background: 'rgba(255,255,255,0.90)', border: '1px solid rgba(0,0,0,0.07)',
-                                boxShadow: '0 2px 10px rgba(0,0,0,0.05)', color: '#334155', borderTopLeftRadius: 4 }
-                            : { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                                border: '1px solid rgba(99,102,241,0.25)',
-                                boxShadow: '0 4px 16px rgba(99,102,241,0.25)', color: '#ffffff', borderTopRightRadius: 4 }
-                          }>
-                          {m.text}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
+                  </div>
+                ))
               )}
               <div ref={endRef} />
             </div>
 
-            {/* Waveform footer */}
+            {/* Status footer */}
             <div className="px-5 pb-4 pt-3 border-t border-black/[0.05]">
-              <div className="flex items-center gap-2 mb-2.5">
+              <div className="flex items-center gap-2">
                 <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
                   style={{ background: isLive ? '#22c55e' : '#cbd5e1', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
                 <span className="text-[10px] font-medium text-slate-400">
-                  {isLive ? 'Microphone Active' : 'Microphone Idle'}
+                  {isLive ? 'Call in progress — Priya is speaking with the candidate' : 'No active call'}
                 </span>
-              </div>
-              <div className="flex items-end justify-between gap-[2px]" style={{ height: 36 }}>
-                {bars.map((lvl, i) => (
-                  <div key={i} className="flex-1 rounded-full transition-all duration-75"
-                    style={{
-                      height: `${Math.max(2, lvl * 36)}px`,
-                      background: lvl > 0.05
-                        ? `linear-gradient(to top, #6366f1, #a78bfa)`
-                        : '#e2e8f0',
-                      opacity: lvl > 0.05 ? 0.45 + lvl * 0.55 : 1,
-                    }} />
-                ))}
               </div>
             </div>
           </div>
@@ -454,9 +324,9 @@ export default function VoiceChat() {
                 <div className="mt-3 space-y-3">
                   <InfoRow label="Status"
                     value={
-                      isLive ? <Chip color="emerald">Live</Chip> :
-                      isBusy ? <Chip color="amber">Connecting</Chip> :
-                      isDone ? <Chip color="slate">Ended</Chip> :
+                      isLive  ? <Chip color="emerald">Live</Chip> :
+                      isBusy  ? <Chip color="amber">Connecting</Chip> :
+                      isDone  ? <Chip color="slate">Ended</Chip> :
                       <span className="text-[11px] text-slate-300">—</span>
                     } />
                   {isLive && (
@@ -466,7 +336,7 @@ export default function VoiceChat() {
                   <InfoRow label="Candidate"
                     value={<span className="text-[12px] font-medium text-slate-600 truncate max-w-[110px]">{name || '—'}</span>} />
                   <InfoRow label="Channel"
-                    value={<span className="text-[12px] text-slate-500">{phone && phone !== '+91' ? 'Outbound' : 'Web'}</span>} />
+                    value={<span className="text-[12px] text-slate-500">Outbound</span>} />
                 </div>
               </section>
 
@@ -501,7 +371,7 @@ export default function VoiceChat() {
                   ))}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-2.5 leading-relaxed">
-                  Vox mirrors the candidate's language — Indian accent via Sarvam AI.
+                  Vox mirrors the candidate's language — powered by Gemini Live.
                 </p>
               </section>
             </>
@@ -552,20 +422,42 @@ function Chip({ color = 'slate', children }) {
 }
 
 function Scorecard({ report, name }) {
+  const [copied, setCopied] = useState(false);
   const outcome = OUTCOME[report.call_outcome] || OUTCOME.CONFUSED;
   const OutIcon = outcome.Icon;
   const score   = typeof report.score === 'number' ? report.score : null;
+  const conf    = report.overall_confidence;
+
+  const handleExport = () => {
+    navigator.clipboard.writeText(buildExportText(report, name))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })
+      .catch(() => {});
+  };
+
+  const hasDimensions = DIMS.some(d => report[d.key]);
+  const hasMetrics = report.salary_expectation_lpa != null || report.current_ctc_lpa != null
+    || report.notice_period_days != null || report.joining_timeline || report.other_offers != null;
 
   return (
     <div className="space-y-3" style={{ animation: 'scoreDrop 0.35s ease-out' }}>
 
-      {/* Hero */}
+      {/* ── Hero ── */}
       <section className="glass rounded-2xl p-5">
-        <Label icon={<Activity size={12} />}>Screening Report</Label>
+        <div className="flex items-center justify-between mb-4">
+          <Label icon={<Activity size={12} />}>Screening Report</Label>
+          <button onClick={handleExport}
+            className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-all"
+            style={{ background: copied ? 'rgba(16,185,129,0.10)' : 'rgba(99,102,241,0.08)',
+                     border: `1px solid ${copied ? 'rgba(16,185,129,0.25)' : 'rgba(99,102,241,0.18)'}`,
+                     color: copied ? '#059669' : '#6366f1' }}>
+            <Copy size={10} />
+            {copied ? 'Copied!' : 'Export'}
+          </button>
+        </div>
 
-        <div className="flex items-center gap-4 mt-4 mb-4">
-          {/* Score ring */}
-          <div className="relative w-[72px] h-[72px] flex-shrink-0 rounded-2xl flex flex-col items-center justify-center"
+        <div className="flex items-start gap-4 mb-4">
+          {/* Score */}
+          <div className="w-[72px] h-[72px] flex-shrink-0 rounded-2xl flex flex-col items-center justify-center"
             style={{ background: scoreBg(score), border: `1.5px solid ${scoreBd(score)}` }}>
             <span className="text-[30px] font-black leading-none" style={{ color: scoreColor(score) }}>
               {score ?? '—'}
@@ -573,33 +465,88 @@ function Scorecard({ report, name }) {
             <span className="text-[9px] text-slate-400 font-semibold mt-0.5">/10</span>
           </div>
 
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-slate-400 mb-2 font-medium">Call Outcome</p>
-            <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${outcome.cls}`}>
-              <OutIcon size={11} />
-              {outcome.label}
+          <div className="flex-1 min-w-0 space-y-2">
+            <div>
+              <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Call Outcome</p>
+              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${outcome.cls}`}>
+                <OutIcon size={11} />
+                {outcome.label}
+              </div>
             </div>
+            {conf != null && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-[6px] h-[6px] rounded-full flex-shrink-0"
+                  style={{ background: confColor(conf) }} />
+                <span className="text-[10px] font-semibold" style={{ color: confColor(conf) }}>
+                  {confLabel(conf)} Confidence
+                </span>
+                <span className="text-[10px] text-slate-400">({Math.round(conf * 100)}%)</span>
+              </div>
+            )}
           </div>
         </div>
 
         {report.vibe_check && (
-          <blockquote className="text-[12px] text-slate-500 italic leading-relaxed border-l-2 pl-3 mt-2"
+          <blockquote className="text-[12px] text-slate-500 italic leading-relaxed border-l-2 pl-3 mt-1"
             style={{ borderColor: 'rgba(99,102,241,0.30)' }}>
             "{report.vibe_check}"
           </blockquote>
         )}
       </section>
 
-      {/* Key metrics */}
-      {(report.salary_expectation_lpa || report.notice_period_days || report.joining_timeline) && (
+      {/* ── Evaluation Dimensions ── */}
+      {hasDimensions && (
+        <section className="glass rounded-2xl p-5">
+          <Label icon={<TrendingUp size={12} />}>Evaluation Dimensions</Label>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            {DIMS.map(({ key, label, Icon: DimIcon, color, bg, bd }) => {
+              const dim = report[key];
+              if (!dim) return null;
+              return (
+                <div key={key} className="rounded-xl p-3" style={{ background: bg, border: `1px solid ${bd}` }}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1">
+                      <DimIcon size={9} style={{ color }} />
+                      <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color }}>
+                        {label}
+                      </span>
+                    </div>
+                    <span className="text-[18px] font-black leading-none" style={{ color }}>
+                      {dim.score}
+                    </span>
+                  </div>
+                  <div className="h-[3px] rounded-full mb-2" style={{ background: 'rgba(0,0,0,0.08)' }}>
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${Math.round((dim.confidence ?? 0) * 100)}%`, background: color, opacity: 0.65 }} />
+                  </div>
+                  {dim.evidence?.[0] && (
+                    <p className="text-[10px] text-slate-500 leading-snug line-clamp-2">
+                      "{dim.evidence[0]}"
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── Key Metrics ── */}
+      {hasMetrics && (
         <section className="glass rounded-2xl p-5">
           <Label icon={<Activity size={12} />}>Key Metrics</Label>
           <div className="grid grid-cols-2 gap-2 mt-3">
-            {report.salary_expectation_lpa && (
-              <MetricTile label="Salary" value={`${report.salary_expectation_lpa} LPA`} />
+            {report.salary_expectation_lpa != null && (
+              <MetricTile label="Expected CTC" value={`${report.salary_expectation_lpa} LPA`} />
             )}
-            {report.notice_period_days && (
+            {report.current_ctc_lpa != null && (
+              <MetricTile label="Current CTC" value={`${report.current_ctc_lpa} LPA`} />
+            )}
+            {report.notice_period_days != null && (
               <MetricTile label="Notice" value={`${report.notice_period_days} days`} />
+            )}
+            {report.other_offers != null && (
+              <MetricTile label="Other Offers" value={report.other_offers ? 'Yes ⚡' : 'No'} />
             )}
             {report.joining_timeline && (
               <MetricTile label="Joining" value={report.joining_timeline} wide />
@@ -608,7 +555,7 @@ function Scorecard({ report, name }) {
         </section>
       )}
 
-      {/* Verified skills */}
+      {/* ── Verified Skills ── */}
       {report.skills_verified?.length > 0 && (
         <section className="glass rounded-2xl p-5">
           <Label icon={<CheckCircle size={12} />}>Verified Skills</Label>
@@ -623,7 +570,7 @@ function Scorecard({ report, name }) {
         </section>
       )}
 
-      {/* Summary */}
+      {/* ── Summary ── */}
       {report.summary_bullets?.length > 0 && (
         <section className="glass rounded-2xl p-5">
           <Label icon={<MessageSquare size={12} />}>Summary</Label>
@@ -638,22 +585,23 @@ function Scorecard({ report, name }) {
         </section>
       )}
 
-      {/* Live notes */}
-      {report.live_notes && Object.keys(report.live_notes).length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<Activity size={12} />}>Captured Notes</Label>
-          <div className="space-y-2.5 mt-3">
-            {Object.entries(report.live_notes).map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                <span className="text-[11px] font-semibold text-slate-700 truncate max-w-[110px]">{String(v)}</span>
-              </div>
-            ))}
+      {/* ── Recommended Action ── */}
+      {report.recommended_next_step && (
+        <section className="rounded-2xl p-4"
+          style={{ background: 'rgba(238,242,255,0.90)', border: '1px solid rgba(99,102,241,0.22)' }}>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Zap size={11} className="text-indigo-500" fill="currentColor" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-indigo-600">
+              Recommended Action
+            </span>
           </div>
+          <p className="text-[12px] text-indigo-900 leading-relaxed font-medium">
+            {report.recommended_next_step}
+          </p>
         </section>
       )}
 
-      {/* HR flags */}
+      {/* ── HR Flags ── */}
       {report.hr_flags?.length > 0 && (
         <section className="glass rounded-2xl p-5"
           style={{ background: 'rgba(255,251,235,0.85)', borderColor: 'rgba(251,191,36,0.25)' }}>

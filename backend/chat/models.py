@@ -15,6 +15,24 @@ class CallSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
 
+    # Agent-layer fields (populated when AgentManager is active)
+    interview_context = models.JSONField(
+        default=dict, blank=True,
+        help_text="Parsed JD intelligence from RecruiterAgent"
+    )
+    dimension_scores = models.JSONField(
+        null=True, blank=True,
+        help_text="Per-dimension scores from EvaluationAgent"
+    )
+    eval_confidence = models.FloatField(
+        null=True, blank=True,
+        help_text="Overall confidence (0-1) that the evaluation is accurate"
+    )
+    eval_reasoning = models.TextField(
+        blank=True, default='',
+        help_text="EvaluationAgent reasoning for the intent score and outcome"
+    )
+
     class Meta:
         ordering = ['-created_at']
 

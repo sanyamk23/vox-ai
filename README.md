@@ -17,9 +17,8 @@ Project Vox is an ultra-low-latency, production-grade Voice AI screening agent d
 
 ## 🛠️ Tech Stack
 
-- **Brain**: [Groq](https://groq.com/) (Llama-3.3-70b) for lightning-fast inference.
-- **Ears**: [Deepgram Nova-2](https://deepgram.com/) for real-time STT with VAD.
-- **Voice**: [Deepgram Aura-Orpheus](https://deepgram.com/) for natural human speech synthesis.
+- **Brain / Voice / Ears**: [Gemini Live](https://ai.google.dev/) — end-to-end real-time audio (STT + LLM + TTS in one stream).
+- **JD Parsing & Scoring**: Gemini (gemini-2.5-flash) for pre-call JD analysis and post-call evaluation.
 - **Backend**: Django ASGI (Daphne) + WebSockets (Channels).
 - **Frontend**: React + TailwindCSS (Glassmorphic Command Center).
 - **Infrastructure**: Docker Compose + Redis (Channel Layers).
@@ -37,8 +36,7 @@ Project Vox is an ultra-low-latency, production-grade Voice AI screening agent d
 Create a `.env` file in the root directory:
 
 ```env
-DEEPGRAM_API_KEY=your_key
-GROQ_API_KEY=your_key
+GEMINI_API_KEY=your_key
 TWILIO_ACCOUNT_SID=your_sid
 TWILIO_AUTH_TOKEN=your_token
 TWILIO_PHONE_NUMBER=your_twilio_number
