@@ -654,14 +654,26 @@ NON-NEGOTIABLE RULES:
         text = self._sanitize_tts_text(text)
         if not text:
             return
+        snippet = text[:60].replace("\n", " ")
         if self.sarvam_key:
+            print(f"[TTS] Sarvam → \"{snippet}\"")
             ok = await self._tts_sarvam(text)
-            if ok or self.is_interrupted:
+            if ok:
+                print("[TTS] Sarvam OK")
                 return
+            if self.is_interrupted:
+                return
+            print("[TTS] Sarvam failed — trying fallback")
         if self.el_key:
+            print(f"[TTS] ElevenLabs → \"{snippet}\"")
             ok = await self._tts_elevenlabs(text)
-            if ok or self.is_interrupted:
+            if ok:
+                print("[TTS] ElevenLabs OK")
                 return
+            if self.is_interrupted:
+                return
+            print("[TTS] ElevenLabs failed — trying Deepgram")
+        print(f"[TTS] Deepgram → \"{snippet}\"")
         await self._tts_deepgram(text)
 
     # ------ Sarvam ----------------------------------------------------------
@@ -670,7 +682,7 @@ NON-NEGOTIABLE RULES:
         lang_code = "hi-IN" if _DEVANAGARI_RE.search(text) else "en-IN"
         is_mulaw  = self.encoding == "mulaw"
         codec     = "mulaw" if is_mulaw else "mp3"
-        rate      = 8000    if is_mulaw else 48000   # 48kHz high-quality for web; 8kHz required by Twilio
+        rate      = 8000    if is_mulaw else 22050
         body = {
             "text": text,
             "target_language_code": lang_code,
@@ -688,39 +700,29 @@ NON-NEGOTIABLE RULES:
         try:
             async with aiohttp.ClientSession(timeout=_TTS_TIMEOUT) as s:
                 async with s.post(
-                    "https://api.sarvam.ai/text-to-speech/stream",
+                    "https://api.sarvam.ai/text-to-speech",
                     json=body, headers=headers,
                 ) as r:
-                    if r.status != 200:
-                        if r.status == 429:
-                            print("[Sarvam] Rate limited")
-                        else:
-                            err = await r.text()
-                            print(f"[Sarvam] {r.status}: {err[:200]}")
+                    if r.status == 200:
+                        data   = await r.json()
+                        audios = data.get("audios") or []
+                        if not audios or not audios[0]:
+                            print("[Sarvam] Empty audio in response")
+                            return False
+                        audio = base64.b64decode(audios[0])
+                        if is_mulaw and audio[:4] == b"RIFF":
+                            print("[Sarvam] Got WAV instead of raw mulaw — skipping")
+                            return False
+                        if audio and not self.is_interrupted:
+                            await self.consumer.send_audio(audio)
+                        return bool(audio)
+                    elif r.status == 429:
+                        print("[Sarvam] Rate limited")
                         return False
-
-                    if is_mulaw:
-                        # Twilio mulaw: each 320-byte frame (40ms) is independently playable.
-                        # Stream chunks as they arrive — lower perceived latency.
-                        sent = False
-                        async for chunk in r.content.iter_chunked(320):
-                            if self.is_interrupted:
-                                return True
-                            if chunk:
-                                await self.consumer.send_audio(chunk)
-                                sent = True
-                        return sent
                     else:
-                        # Web client: browser's decodeAudioData needs a complete MP3 file.
-                        # Buffer the full stream, then send once.
-                        buf = bytearray()
-                        async for chunk in r.content.iter_chunked(8192):
-                            buf.extend(chunk)
-                        if buf and not self.is_interrupted:
-                            await self.consumer.send_audio(bytes(buf))
-                            return True
-                        return bool(buf)
-
+                        err = await r.text()
+                        print(f"[Sarvam] {r.status}: {err[:300]}")
+                        return False
         except asyncio.TimeoutError:
             print("[Sarvam] Timeout")
             return False
@@ -782,7 +784,9 @@ NON-NEGOTIABLE RULES:
                 async with s.post(url, json={"text": text}, headers=headers) as r:
                     if r.status == 200:
                         if not self.is_interrupted:
-                            await self.consumer.send_audio(await r.read())
+                            audio = await r.read()
+                            print(f"[TTS] Deepgram OK ({len(audio)} bytes)")
+                            await self.consumer.send_audio(audio)
                     else:
                         body = await r.text()
                         print(f"[Deepgram-TTS] {r.status}: {body[:200]}")
