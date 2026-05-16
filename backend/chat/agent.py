@@ -14,7 +14,7 @@ from .mcp_server import VoxMCPTools
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SARVAM_SPEAKER = "anushka"
+_DEFAULT_SARVAM_SPEAKER = "shreya"
 _SILENT_TOOLS  = {"save_candidate_info"}
 _VALID_OUTCOMES = {"INTERESTED", "BUSY", "NOT_INTERESTED", "CALLBACK_REQUESTED", "CONFUSED"}
 _TTS_TIMEOUT   = aiohttp.ClientTimeout(total=7, connect=4)
@@ -670,7 +670,7 @@ NON-NEGOTIABLE RULES:
         lang_code = "hi-IN" if _DEVANAGARI_RE.search(text) else "en-IN"
         is_mulaw  = self.encoding == "mulaw"
         codec     = "mulaw" if is_mulaw else "mp3"
-        rate      = 8000    if is_mulaw else 22050
+        rate      = 8000    if is_mulaw else 48000   # 48kHz high-quality for web; 8kHz required by Twilio
         body = {
             "text": text,
             "target_language_code": lang_code,
@@ -679,7 +679,7 @@ NON-NEGOTIABLE RULES:
             "enable_preprocessing": True,
             "output_audio_codec": codec,
             "speech_sample_rate": rate,
-            "pace": 1.1,
+            "pace": 1.00,
         }
         headers = {
             "api-subscription-key": self.sarvam_key,
