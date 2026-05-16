@@ -44,9 +44,13 @@ Conduct a 10-15 minute initial screening call to evaluate a candidate's fit for 
 4. **Logistics & Compensation (Turn 10-12)**:
    - Transition smoothly: "Now, just to make sure we're aligned on the practical side..."
    - Mandatory: Current CTC, Expected CTC (LPA), and Notice Period.
-5. **Closing & Next Steps (Turn 13+)**:
+5. **Closing & Next Steps (Turn 13+ or if candidate wants to end)**:
    - Invite 1-2 quick questions.
-   - Close: "I'll be syncing with the hiring manager this evening. Expect an update by tomorrow morning."
+   - Close: "I'll be syncing with the hiring manager this evening. Expect an update by tomorrow morning. We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
+
+# SESSION TERMINATION
+- **End Detection**: If the candidate says "bye", "goodbye", "thanks, talk soon", or otherwise indicates they want to end the call, transition immediately to your final closing sentence.
+- **MANDATORY**: When you have finished your final closing sentence and are ready to terminate the session, you MUST say exactly "[END_CALL]" at the very end of your response. This is a technical signal required to stop voice detection and close the call.
 
 # LINGUISTIC MIRRORING & EMPOWERMENT
 - **Primary Rule**: Detect and mirror the candidate's language on a **turn-by-turn basis**.
@@ -69,6 +73,7 @@ Conduct a 10-15 minute initial screening call to evaluate a candidate's fit for 
 - **Active Listening**: Use verbal bridges ("Got it," "That makes sense," "Interesting point") to show you are following.
 - **Hinglish/Multilingual**: If the candidate uses Hindi or Hinglish, mirror their language naturally to build comfort.
 - **No Bullet Points**: Speak in natural, flowing sentences. Use fillers like "actually," "basically," and "to be honest" to sound human.
+- **Mandatory Closing Sentence**: Your final sentence should be: "We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
 """
 
 
@@ -275,6 +280,8 @@ class GeminiLiveBridge:
                 on_flush=self._emit_transcript_turn,
                 on_session_line=self.transcript.append,
             )
+        self._ending = False
+        self._close_task: asyncio.Task | None = None
 
     def enqueue_twilio_event(self, data: dict) -> None:
         self._inbound_twilio.put_nowait(data)
@@ -282,10 +289,18 @@ class GeminiLiveBridge:
     def feed_pcm(self, chunk: bytes) -> None:
         if chunk:
             self._inbound_pcm.put_nowait(chunk)
-
     async def _emit_transcript_turn(self, role: str, sentence: str) -> None:
-        if not self._on_transcript:
+        if role == "vox" and "[END_CALL]" in sentence:
+            print("[Gemini] End-of-call signal detected. Scheduling close...")
+            sentence = sentence.replace("[END_CALL]", "").strip()
+            self._ending = True
+            if self._close_task:
+                self._close_task.cancel()
+            self._close_task = asyncio.create_task(self._delayed_close(6.0))
+
+        if not sentence:
             return
+
         label = (
             "[Gemini AI Recruiter]"
             if self._mode == "twilio" and role == "vox"
@@ -293,7 +308,13 @@ class GeminiLiveBridge:
             else "[Candidate]"
         )
         print(f"{label} {sentence}")
-        await self._on_transcript(role, sentence)
+        if self._on_transcript:
+            await self._on_transcript(role, sentence)
+
+    async def _delayed_close(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        print("[Gemini] Closing session after delay.")
+        self._closed.set()
 
     async def run(self) -> None:
         api_key = _gemini_api_key()
@@ -447,6 +468,13 @@ class GeminiLiveBridge:
 
                                 if sc.input_transcription:
                                     it = sc.input_transcription
+                                    if it.text and self._ending:
+                                        print("[Gemini] User spoke during shutdown window — cancelling close.")
+                                        self._ending = False
+                                        if self._close_task:
+                                            self._close_task.cancel()
+                                            self._close_task = None
+
                                     if agg:
                                         await agg.push("user", it.text, it.finished)
                                     elif it.text:

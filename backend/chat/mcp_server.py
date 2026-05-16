@@ -10,6 +10,10 @@ class VoxMCPTools:
     async def save_candidate_info(self, field: str, value: str) -> Dict[str, Any]:
         return {"status": "saved", "field": field, "value": value}
 
+    async def end_call(self) -> Dict[str, Any]:
+        """Signal to the agent to terminate the session."""
+        return {"status": "ending"}
+
     async def get_github_stats(self, username: str) -> Dict[str, Any]:
         if not username:
             return {"error": "No username provided"}
@@ -112,6 +116,14 @@ class VoxMCPTools:
                         },
                         "required": ["username"],
                     },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "end_call",
+                    "description": "Call this to end the screening call once you have finished the closing sentence and the candidate has acknowledged it. This will immediately terminate the session.",
+                    "parameters": {"type": "object", "properties": {}},
                 },
             },
         ]

@@ -5,10 +5,21 @@ import os
 import random
 import re
 import time
+import io
+
+from pydub import AudioSegment
 from groq import AsyncGroq, RateLimitError as GroqRateLimitError
 from deepgram import AsyncDeepgramClient
 import aiohttp
 from .mcp_server import VoxMCPTools
+
+try:
+    import audioop
+except ImportError:
+    try:
+        import audioop_lts as audioop
+    except ImportError:
+        audioop = None
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -108,7 +119,10 @@ The role you are hiring for is: {jd}
 3. **Motivation (Turns 9-11)**: Understand the "Why". What's missing in their current environment? What does their ideal next role look like?
 4. **Logistics & Compensation (Turns 12-14)**: Get the facts. Current CTC, Expected CTC (LPA), and Notice Period. Handle this with professional transparency.
 5. **Candidate Questions (Turns 15-16)**: "I want to leave some space for you—what can I tell you about the team or the culture?"
-6. **Closing (Turns 17+)**: Set expectations. "I'll be reviewing my notes with the hiring manager. You'll hear from us regarding next steps within 24 hours."
+6. **Closing (Turns 17+ or if candidate wants to end)**: Set expectations. "I'll be reviewing my notes with the hiring manager. You'll hear from us regarding next steps within 24 hours. We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
+
+# SESSION TERMINATION
+- **End Detection**: If the candidate says "bye", "goodbye", "thanks, talk soon", or otherwise indicates they want to end the call, transition immediately to your final closing sentence.
 
 # LINGUISTIC MIRRORING & EMPOWERMENT
 - **Primary Rule**: Detect and mirror the candidate's language on a **turn-by-turn basis**.
@@ -129,6 +143,8 @@ The role you are hiring for is: {jd}
 - **Hinglish Capability**: Naturally blend English and Hindi (Haan, Bilkul, Achha) if {name} does so.
 - **One Question Policy**: Never ask multiple questions in a single turn.
 - **Speech Optimization**: No markdown, no bullets, no special characters. You are speaking, not writing.
+- **Mandatory Closing Sentence**: Your final sentence should be: "We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
+9. MANDATORY: When you have finished your final closing sentence and are ready to terminate the session, you MUST say exactly "[END_CALL]" at the very end of your response. This is a technical signal required to stop voice detection and close the call.
 """
 
 VOX_GREETING_KICKOFF = (
@@ -264,6 +280,8 @@ class VoiceAgent:
         self._active                   = False
         self._watchdog_fires: int      = 0
         self._ai_finished_speaking_at  = time.time()
+        self._ending                   = False
+        self._stop_task: asyncio.Task | None = None
 
         self.dg_key        = os.getenv("DEEPGRAM_API_KEY", "")
         self.sarvam_key    = os.getenv("SARVAM_API_KEY", "")
@@ -293,6 +311,23 @@ class VoiceAgent:
         self.dg_listener_task = None
 
         self.chat_history = [{"role": "system", "content": self._build_system_prompt()}]
+        self._load_audio_assets()
+
+    def _load_audio_assets(self) -> None:
+        """Load audio assets for background noise, keyboard clicks, and breaths."""
+        self.assets_path = os.path.join(os.path.dirname(__file__), "assets")
+        self.bg_noise = self._load_asset("background_noise.wav")
+        self.keyboard_click = self._load_asset("keyboard_click.wav")
+        self.breath = self._load_asset("breath.wav")
+
+    def _load_asset(self, filename: str) -> AudioSegment | None:
+        path = os.path.join(self.assets_path, filename)
+        if os.path.exists(path):
+            try:
+                return AudioSegment.from_file(path)
+            except Exception as e:
+                print(f"[Assets] Failed to load {filename}: {e}")
+        return None
 
     def _log_provider_config(self) -> None:
         tts = "Sarvam" if self.sarvam_key else ("ElevenLabs" if self.el_key else "Deepgram")
@@ -444,6 +479,13 @@ class VoiceAgent:
         await self.consumer.send_interrupt()
 
     async def trigger_llm_response(self, user_text: str) -> None:
+        if self._ending:
+            print("[Vox] User spoke during shutdown window — cancelling stop.")
+            self._ending = False
+            if self._stop_task:
+                self._stop_task.cancel()
+                self._stop_task = None
+
         self.is_interrupted  = False
         self.is_ai_speaking  = True
         self.turn_count     += 1
@@ -561,8 +603,17 @@ class VoiceAgent:
             if tool_accumulator and not self.is_interrupted:
                 await self._handle_tool_calls(tool_accumulator, ai_text)
             elif ai_text and not self.is_interrupted:
-                self.chat_history.append({"role": "assistant", "content": ai_text})
-                await self.consumer.send_transcript("vox", ai_text)
+                if "[END_CALL]" in ai_text:
+                    print("[Vox] End-of-call signal detected. Scheduling stop...")
+                    ai_text = ai_text.replace("[END_CALL]", "").strip()
+                    self._ending = True
+                    if self._stop_task:
+                        self._stop_task.cancel()
+                    self._stop_task = asyncio.create_task(self._delayed_stop(7.0))
+
+                if ai_text:
+                    self.chat_history.append({"role": "assistant", "content": ai_text})
+                    await self.consumer.send_transcript("vox", ai_text)
 
         except asyncio.CancelledError:
             pass
@@ -646,8 +697,17 @@ class VoiceAgent:
             if buf.strip() and not self.is_interrupted:
                 await self.send_to_tts(buf.strip())
             if text:
-                self.chat_history.append({"role": "assistant", "content": text})
-                await self.consumer.send_transcript("vox", text)
+                if "[END_CALL]" in text:
+                    print("[Vox] End-of-call signal detected (followup). Scheduling stop...")
+                    text = text.replace("[END_CALL]", "").strip()
+                    self._ending = True
+                    if self._stop_task:
+                        self._stop_task.cancel()
+                    self._stop_task = asyncio.create_task(self._delayed_stop(7.0))
+
+                if text:
+                    self.chat_history.append({"role": "assistant", "content": text})
+                    await self.consumer.send_transcript("vox", text)
         except Exception as e:
             print(f"[Followup-Error] {e}")
         finally:
@@ -666,7 +726,18 @@ class VoiceAgent:
             return await self.mcp.get_linkedin_assessment(args.get("profile_url", ""))
         elif name == "get_resume_context":
             return await self.mcp.get_resume_context(args.get("candidate_id", ""))
+        elif name == "end_call":
+            self._ending = True
+            if self._stop_task:
+                self._stop_task.cancel()
+            self._stop_task = asyncio.create_task(self._delayed_stop(5.0))
+            return {"status": "ending"}
         return {"error": f"Unknown tool: {name}"}
+
+    async def _delayed_stop(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        print("[Vox] Closing session after delay.")
+        await self.stop_pipeline()
 
     # -----------------------------------------------------------------------
     # TTS text sanitization
@@ -727,7 +798,8 @@ class VoiceAgent:
         lang_code = "hi-IN" if is_hindi else "en-IN"
 
         is_mulaw  = self.encoding == "mulaw"
-        codec     = "mulaw" if is_mulaw else "mp3"
+        # Use wav for web channel to allow pydub processing without ffmpeg
+        codec     = "mulaw" if is_mulaw else "wav"
         rate      = 8000    if is_mulaw else 22050
         body = {
             "text": text,
@@ -756,6 +828,10 @@ class VoiceAgent:
                             print("[Sarvam] Empty audio in response")
                             return False
                         audio = base64.b64decode(audios[0])
+                        
+                        # Apply audio effects (background noise, keyboard, breaths)
+                        audio = self._mix_audio_effects(audio, codec)
+
                         if is_mulaw and audio[:4] == b"RIFF":
                             print("[Sarvam] Got WAV instead of raw mulaw — skipping")
                             return False
@@ -775,6 +851,98 @@ class VoiceAgent:
         except Exception as e:
             print(f"[Sarvam] {e}")
             return False
+
+    def _mix_audio_effects(self, audio_bytes: bytes, codec: str) -> bytes:
+        """Mix background noise, keyboard clicks, and breaths into the audio."""
+        if not (self.bg_noise or self.keyboard_click or self.breath):
+            return audio_bytes
+
+        try:
+            if codec == "mulaw":
+                return self._mix_mulaw(audio_bytes)
+            elif codec == "wav":
+                return self._mix_wav(audio_bytes)
+        except Exception as e:
+            print(f"[Mix] Error mixing audio: {e}")
+            return audio_bytes
+        return audio_bytes
+
+    def _mix_mulaw(self, audio_bytes: bytes) -> bytes:
+        """Mix effects for Twilio (mulaw 8kHz)."""
+        # Convert mulaw to linear PCM (16-bit)
+        pcm = audioop.ulaw2lin(audio_bytes, 2)
+        
+        # Mix background noise if available
+        if self.bg_noise:
+            # Resample bg_noise to 8kHz if needed, but easier to assume asset is correct
+            # or use pydub to get samples
+            bg_samples = self.bg_noise.set_frame_rate(8000).set_channels(1).get_array_of_samples()
+            # ... low-level mixing with audioop is complex for randomized effects ...
+            # For simplicity, if we have mulaw, we use pydub if it can handle it,
+            # but pydub needs ffmpeg for mulaw.
+            # Fallback: just return original for mulaw if asset loading is complex
+            pass
+
+        # To keep it robust, let's use pydub for WAV (Web) and skip for mulaw 
+        # unless we want to implement full PCM mixing.
+        # Actually, let's use pydub for both if we can, but we need to convert mulaw to wav first.
+        
+        # IMPROVED APPROACH: Use pydub for everything by converting raw mulaw to a Wave-like segment
+        # Since mulaw is 8-bit, 8000Hz, we can manually create a segment.
+        try:
+            # mulaw -> pcm -> AudioSegment
+            pcm = audioop.ulaw2lin(audio_bytes, 2)
+            seg = AudioSegment(data=pcm, sample_width=2, frame_rate=8000, channels=1)
+            seg = self._apply_pydub_effects(seg)
+            # seg -> pcm -> mulaw
+            pcm_out = seg.raw_data
+            return audioop.lin2ulaw(pcm_out, 2)
+        except Exception as e:
+            print(f"[Mix-Mulaw] {e}")
+            return audio_bytes
+
+    def _mix_wav(self, audio_bytes: bytes) -> bytes:
+        """Mix effects for Web (WAV)."""
+        try:
+            seg = AudioSegment.from_file(io.BytesIO(audio_bytes), format="wav")
+            seg = self._apply_pydub_effects(seg)
+            out = io.BytesIO()
+            seg.export(out, format="wav")
+            return out.getvalue()
+        except Exception as e:
+            print(f"[Mix-Wav] {e}")
+            return audio_bytes
+
+    def _apply_pydub_effects(self, seg: AudioSegment) -> AudioSegment:
+        """Apply the actual overlays using pydub."""
+        duration_ms = len(seg)
+        
+        # 1. Background Noise (looped and quiet)
+        if self.bg_noise:
+            bg = self.bg_noise.set_frame_rate(seg.frame_rate).set_channels(seg.channels)
+            # Take a random slice of bg noise
+            if len(bg) > duration_ms:
+                start = random.randint(0, len(bg) - duration_ms)
+                bg_slice = bg[start:start + duration_ms]
+            else:
+                bg_slice = (bg * (duration_ms // len(bg) + 1))[:duration_ms]
+            seg = seg.overlay(bg_slice.apply_gain(-25))
+
+        # 2. Keyboard Clicks (randomly placed)
+        if self.keyboard_click and duration_ms > 500:
+            click = self.keyboard_click.set_frame_rate(seg.frame_rate).set_channels(seg.channels).apply_gain(-20)
+            num_clicks = random.randint(1, max(1, duration_ms // 1500))
+            for _ in range(num_clicks):
+                pos = random.randint(0, duration_ms - 100)
+                seg = seg.overlay(click, position=pos)
+
+        # 3. Breaths (at the beginning, 30% chance)
+        if self.breath and random.random() < 0.3:
+            br = self.breath.set_frame_rate(seg.frame_rate).set_channels(seg.channels).apply_gain(-15)
+            # Overlay at the very beginning
+            seg = seg.overlay(br, position=0)
+
+        return seg
 
     # ------ ElevenLabs (second-tier) ----------------------------------------
 
