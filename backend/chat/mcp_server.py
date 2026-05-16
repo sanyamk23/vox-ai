@@ -114,35 +114,4 @@ class VoxMCPTools:
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_linkedin_assessment",
-                    "description": (
-                        "Assess a candidate's LinkedIn profile for seniority and fit. "
-                        "Only call if the candidate shares their LinkedIn URL."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "profile_url": {"type": "string", "description": "Full LinkedIn profile URL"}
-                        },
-                        "required": ["profile_url"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_resume_context",
-                    "description": "Retrieve parsed resume details for a candidate by their internal ID.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "candidate_id": {"type": "string"}
-                        },
-                        "required": ["candidate_id"],
-                    },
-                },
-            },
         ]
