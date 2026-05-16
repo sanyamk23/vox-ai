@@ -118,6 +118,7 @@ class CallRetryManager:
         jd: str,
         transcript: list[str],
         notes: dict,
+        resume_text: str = "",
     ) -> int:
         """
         Saves the dropped call's context and returns the NEW retry number
@@ -131,12 +132,13 @@ class CallRetryManager:
 
         new_count = state.get("count", 0) + 1
         cls.save(phone, {
-            "count":      new_count,
-            "transcript": combined,
-            "notes":      notes,
-            "jd":         jd,
-            "name":       name,
-            "updated_at": time.time(),
+            "count":       new_count,
+            "transcript":  combined,
+            "notes":       notes,
+            "jd":          jd,
+            "name":        name,
+            "resume_text": resume_text or state.get("resume_text", ""),
+            "updated_at":  time.time(),
         })
         logger.info("[Retry] Drop recorded for %s — retry_num=%d", phone, new_count)
         return new_count
@@ -218,6 +220,7 @@ class CallRetryManager:
         jd: str,
         transcript: list[str],
         notes: dict,
+        resume_text: str = "",
         retry_num: int,
         delay_seconds: float,
         host_url: str,
@@ -232,6 +235,7 @@ class CallRetryManager:
             cls._delayed_call(
                 phone=phone, name=name, jd=jd,
                 transcript=transcript, notes=notes,
+                resume_text=resume_text,
                 retry_num=retry_num, delay_seconds=delay_seconds,
                 host_url=host_url, from_number=from_number,
             ),
@@ -251,6 +255,7 @@ class CallRetryManager:
         jd: str,
         transcript: list[str],
         notes: dict,
+        resume_text: str = "",
         retry_num: int,
         delay_seconds: float,
         host_url: str,
@@ -272,6 +277,7 @@ class CallRetryManager:
                     host_url=host_url,
                     jd=jd,
                     name=name,
+                    resume_text=resume_text,
                     retry_num=retry_num,
                     prior_transcript=transcript[-_MAX_PRIOR_LINES:],
                     prior_notes=notes,

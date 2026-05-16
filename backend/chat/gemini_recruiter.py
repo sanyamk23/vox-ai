@@ -263,6 +263,7 @@ class GeminiLiveBridge:
         call_sid: str = "",
         call_channel: str = "web",
         interview_context: Any = None,
+        resume_text: str = "",
     ):
         self._mode = mode
         self._system_prompt = system_prompt
@@ -280,6 +281,7 @@ class GeminiLiveBridge:
         self._call_sid = call_sid
         self._call_channel = call_channel
         self._interview_context = interview_context
+        self._resume_text = resume_text
 
         self._inbound_twilio: asyncio.Queue[dict] = asyncio.Queue()
         self._inbound_pcm: asyncio.Queue[bytes] = asyncio.Queue()
@@ -594,6 +596,7 @@ class GeminiLiveBridge:
                     candidate_name=self._candidate_name,
                     candidate_phone=self._candidate_phone,
                     job_description=self._job_description,
+                    resume_text=self._resume_text,
                     call_sid=self._call_sid,
                     call_channel=self._call_channel,
                     interview_context=self._interview_context,

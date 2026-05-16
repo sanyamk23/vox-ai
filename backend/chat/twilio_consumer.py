@@ -51,10 +51,11 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             prior_transcript = session.get("prior_transcript", [])
             prior_notes      = session.get("prior_notes", {})
 
-            self._phone     = phone
-            self._name      = name
-            self._jd        = jd
-            self._retry_num = retry_num
+            self._phone        = phone
+            self._name         = name
+            self._jd           = jd
+            self._retry_num    = retry_num
+            self._resume_text  = resume_text
 
             print(
                 f"[Twilio] attempt={retry_num + 1}/3 | phone={phone} | name={name} | resume={bool(resume_text)}"
@@ -110,6 +111,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 job_description=jd,
                 call_channel="twilio",
                 interview_context=context,
+                resume_text=resume_text,
             )
             self._bridge_task = asyncio.create_task(self.bridge.run())
             print("[Twilio] Gemini Live bridge started.")
@@ -151,6 +153,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             jd=self._jd,
             transcript=transcript,
             notes={},   # Gemini path doesn't use silent tools; notes come from transcript
+            resume_text=self._resume_text,
         )
 
         host_url = os.getenv("PUBLIC_URL", "").strip()
@@ -171,6 +174,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             jd=self._jd,
             transcript=state.get("transcript", transcript),
             notes=state.get("notes", {}),
+            resume_text=state.get("resume_text", self._resume_text),
             retry_num=retry_num,
             delay_seconds=delay,
             host_url=host_url,

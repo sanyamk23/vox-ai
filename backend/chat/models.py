@@ -6,6 +6,7 @@ class CallSession(models.Model):
     candidate_name = models.CharField(max_length=200, default='Candidate')
     candidate_phone = models.CharField(max_length=20, blank=True, default='')
     job_description = models.TextField(blank=True, default='')
+    resume_text = models.TextField(blank=True, default='')
     transcript = models.JSONField(default=list)
     notes = models.JSONField(default=dict)
     summary = models.TextField(blank=True, default='')
