@@ -87,7 +87,7 @@ export default function VoiceChat() {
   const [status,   setStatus]   = useState('idle');
   const [messages, setMessages] = useState([]);
   const [recap,    setRecap]    = useState(null);
-  const [jd,       setJd]       = useState('We are looking for a Senior Software Engineer proficient in React and Django.');
+  const [jd,       setJd]       = useState('');
   const [phone,    setPhone]    = useState('+91');
   const [name,     setName]     = useState('');
   const [elapsed,  setElapsed]  = useState(0);
