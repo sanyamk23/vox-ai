@@ -62,6 +62,38 @@ docker-compose up --build
 
 ---
 
+## 🧪 Testing & Quality Assurance
+
+Project Vox uses a multi-layered testing strategy (Unit, Component, E2E) to ensure conversational stability.
+
+### Running Tests Locally
+Ensure the Docker containers are running, then execute:
+```bash
+./scripts/run_tests.sh
+```
+
+### Pre-commit Hooks
+We use `pre-commit` to ensure all tests pass and code is clean before every commit.
+
+1. Install pre-commit:
+   ```bash
+   pip install pre-commit
+   ```
+2. Install the hooks:
+   ```bash
+   pre-commit install
+   ```
+3. (Optional) Run against all files:
+   ```bash
+   pre-commit run --all-files
+   ```
+
+The pre-commit pipeline includes:
+- **Linting**: Trailing whitespace, EOF fixing, YAML validation.
+- **Logic Verification**: Automatic execution of the full 18-test suite in the backend container.
+
+---
+
 ## 🏗️ Architecture Overview
 
 Project Vox operates on a **Single-Loop Streaming Pipeline**:

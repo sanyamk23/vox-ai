@@ -85,8 +85,15 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError:
             return
-        if hasattr(self, "bridge"):
+
+        # Ensure bridge is initialized before enqueuing
+        if hasattr(self, "bridge") and self.bridge:
             self.bridge.enqueue_twilio_event(data)
+        else:
+            # If we get media before bridge is ready, it's rare but possible
+            event = data.get("event")
+            if event == "media":
+                pass # Drop or could buffer if critical
 
     async def _send_twilio_json(self, payload: dict) -> None:
         await self.send(text_data=json.dumps(payload))
