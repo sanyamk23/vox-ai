@@ -42,19 +42,27 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             await self.agent.stop_pipeline()
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except Exception:
+            return
         event = data.get("event")
 
         if event == "start":
-            self.stream_sid = data["start"]["streamSid"]
-            # Capture call_sid from Twilio's start event for DB traceability
-            self.agent.call_sid = data["start"].get("callSid", "")
+            start = data.get("start", {})
+            self.stream_sid = start.get("streamSid", "")
+            self.agent.call_sid = start.get("callSid", "")
             print(f"[Twilio] Stream started: {self.stream_sid} | Call: {self.agent.call_sid}")
             await self.agent.initial_greeting()
 
         elif event == "media":
-            chunk = base64.b64decode(data["media"]["payload"])
-            await self.agent.process_audio_chunk(chunk)
+            try:
+                payload = data.get("media", {}).get("payload", "")
+                if payload:
+                    chunk = base64.b64decode(payload)
+                    await self.agent.process_audio_chunk(chunk)
+            except Exception as e:
+                print(f"[Twilio] Bad media chunk: {e}")
 
         elif event == "stop":
             print("[Twilio] Stream stopped.")

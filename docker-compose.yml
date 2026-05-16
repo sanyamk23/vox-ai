@@ -33,8 +33,9 @@ services:
       - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
       - PUBLIC_URL=${PUBLIC_URL}
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
-      - SARVAM_SPEAKER=${SARVAM_SPEAKER:-anushka}
-      - SARVAM_MODEL=${SARVAM_MODEL:-bulbul:v2}
+      - SARVAM_SPEAKER=${SARVAM_SPEAKER:-shreya}
+      - SARVAM_MODEL=${SARVAM_MODEL:-bulbul:v3}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-django-insecure-vox-ai-secret-change-in-production}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
       - SIGNALWIRE_PROJECT_ID=${SIGNALWIRE_PROJECT_ID:-}
@@ -53,7 +54,7 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_WS_BACKEND_URL=ws://localhost:8000/ws/voice/
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000}
 
 volumes:
   postgres_data:

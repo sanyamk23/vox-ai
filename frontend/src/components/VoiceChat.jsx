@@ -17,6 +17,10 @@ const scoreColor = (s) => s >= 8 ? '#059669' : s >= 5 ? '#d97706' : '#dc2626';
 const scoreBg    = (s) => s >= 8 ? 'rgba(16,185,129,0.08)' : s >= 5 ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
 const scoreBd    = (s) => s >= 8 ? 'rgba(16,185,129,0.22)' : s >= 5 ? 'rgba(245,158,11,0.22)' : 'rgba(239,68,68,0.22)';
 
+// ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+const WS_BASE  = API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 const jsonTry = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -94,7 +98,15 @@ export default function VoiceChat() {
   }, []);
 
   const startMic = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      alert('Microphone access denied. Please allow microphone access and try again.');
+      cleanup();
+      setStatus('idle');
+      return;
+    }
     streamRef.current = stream;
     const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     audioCtxRef.current = ctx;
@@ -130,7 +142,7 @@ export default function VoiceChat() {
 
   const startWeb = useCallback(async () => {
     setStatus('connecting'); setMessages([]); setRecap(null);
-    const url = `ws://localhost:8000/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`;
+    const url = `${WS_BASE}/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.onopen    = async () => { setStatus('connected'); await startMic(); };
@@ -153,7 +165,7 @@ export default function VoiceChat() {
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
     try {
-      const r   = await fetch('http://localhost:8000/api/call/', {
+      const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, jd, name }),
       });
