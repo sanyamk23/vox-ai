@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Phone, Square, Activity, Briefcase, User,
+  Phone, Activity, Briefcase, User,
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
   Copy, TrendingUp, Heart, Package, Code2,
+  FileText, Upload,
 } from 'lucide-react';
 
 // ── Outcome config ─────────────────────────────────────────────────────────────
@@ -84,16 +85,22 @@ const fmt     = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function VoiceChat() {
-  const [status,   setStatus]   = useState('idle');
-  const [messages, setMessages] = useState([]);
-  const [recap,    setRecap]    = useState(null);
-  const [jd,       setJd]       = useState('');
-  const [phone,    setPhone]    = useState('+91');
-  const [name,     setName]     = useState('');
-  const [elapsed,  setElapsed]  = useState(0);
+  const [status,       setStatus]       = useState('idle');
+  const [messages,     setMessages]     = useState([]);
+  const [recap,        setRecap]        = useState(null);
+  const [jd,           setJd]           = useState('');
+  const [phone,        setPhone]        = useState('+91');
+  const [name,         setName]         = useState('');
+  const [elapsed,      setElapsed]      = useState(0);
+  const [resumeText,   setResumeText]   = useState('');
+  const [resumeStatus, setResumeStatus] = useState('idle'); // idle | uploading | ready | error
+  const [resumeFile,   setResumeFile]   = useState('');
+  const [resumeError,  setResumeError]  = useState('');
+  const [dragOver,     setDragOver]     = useState(false);
 
-  const endRef   = useRef(null);
-  const timerRef = useRef(null);
+  const endRef       = useRef(null);
+  const timerRef     = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -107,12 +114,49 @@ export default function VoiceChat() {
     return () => clearInterval(timerRef.current);
   }, [status]);
 
+  const handleResumeFile = useCallback(async (file) => {
+    if (!file) return;
+    const fname = file.name.toLowerCase();
+    if (!fname.endsWith('.pdf') && !fname.endsWith('.docx')) {
+      setResumeStatus('error');
+      setResumeError('Only PDF and DOCX files are supported');
+      return;
+    }
+    setResumeFile(file.name);
+    setResumeStatus('uploading');
+    setResumeError('');
+    const form = new FormData();
+    form.append('resume', file);
+    try {
+      const r = await fetch(`${API_BASE}/api/upload-resume/`, { method: 'POST', body: form });
+      const res = await r.json();
+      if (res.status === 'success') {
+        setResumeText(res.text);
+        setResumeStatus('ready');
+      } else {
+        setResumeStatus('error');
+        setResumeError(res.message || 'Upload failed');
+      }
+    } catch {
+      setResumeStatus('error');
+      setResumeError('Network error — check connection');
+    }
+  }, []);
+
+  const clearResume = useCallback(() => {
+    setResumeText('');
+    setResumeStatus('idle');
+    setResumeFile('');
+    setResumeError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
+
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
     try {
       const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, jd, name }),
+        body: JSON.stringify({ phone, jd, name, resume_text: resumeText }),
       });
       const res = await r.json();
       if (res.status === 'success') {
@@ -120,7 +164,7 @@ export default function VoiceChat() {
         setStatus('connected');
       } else { alert(res.message); setStatus('idle'); }
     } catch { alert('Backend unreachable.'); setStatus('idle'); }
-  }, [phone, jd, name]);
+  }, [phone, jd, name, resumeText]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
@@ -221,6 +265,75 @@ export default function VoiceChat() {
             </div>
           </section>
 
+          {/* Resume Upload */}
+          <section className="glass rounded-2xl p-5">
+            <Label icon={<FileText size={12} />}>Resume <span className="text-slate-300 font-normal normal-case tracking-normal">(optional)</span></Label>
+            <div
+              className="mt-3 rounded-xl border-2 border-dashed transition-all cursor-pointer"
+              style={{
+                borderColor: dragOver ? '#6366f1' : resumeStatus === 'ready' ? 'rgba(16,185,129,0.40)' : resumeStatus === 'error' ? 'rgba(239,68,68,0.35)' : 'rgba(99,102,241,0.25)',
+                background:  dragOver ? 'rgba(99,102,241,0.05)' : resumeStatus === 'ready' ? 'rgba(16,185,129,0.04)' : 'transparent',
+              }}
+              onDragOver={(e) => { e.preventDefault(); if (!isLive) setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!isLive) handleResumeFile(e.dataTransfer.files[0]); }}
+              onClick={() => { if (!isLive && resumeStatus !== 'uploading') fileInputRef.current?.click(); }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx"
+                className="hidden"
+                onChange={(e) => handleResumeFile(e.target.files[0])}
+              />
+
+              {resumeStatus === 'idle' && (
+                <div className="py-5 flex flex-col items-center gap-2">
+                  <Upload size={18} className="text-indigo-400" />
+                  <p className="text-[11px] text-slate-400 text-center leading-relaxed px-2">
+                    Drop PDF or DOCX here<br />or click to browse
+                  </p>
+                </div>
+              )}
+
+              {resumeStatus === 'uploading' && (
+                <div className="py-5 flex flex-col items-center gap-2">
+                  <Loader2 size={18} className="text-indigo-500 animate-spin" />
+                  <p className="text-[11px] text-indigo-600 font-medium">Parsing resume…</p>
+                </div>
+              )}
+
+              {resumeStatus === 'ready' && (
+                <div className="py-4 px-3 flex items-start gap-2.5">
+                  <CheckCircle size={15} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-emerald-700 truncate">{resumeFile}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{resumeText.length.toLocaleString()} characters extracted</p>
+                  </div>
+                </div>
+              )}
+
+              {resumeStatus === 'error' && (
+                <div className="py-4 px-3 flex items-start gap-2.5">
+                  <XCircle size={15} className="text-red-500 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-red-600 leading-snug">{resumeError}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Click to try again</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {resumeStatus === 'ready' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); clearResume(); }}
+                className="mt-2 w-full text-[10px] text-slate-400 hover:text-red-500 transition-colors text-center"
+              >
+                ✕ Remove resume
+              </button>
+            )}
+          </section>
+
           {/* CTA */}
           <div className="space-y-2">
             {isLive ? (
@@ -236,7 +349,7 @@ export default function VoiceChat() {
               </button>
             )}
             {(isLive || isDone) && (
-              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); }}
+              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); clearResume(); }}
                 className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
                 ↺ New Session
               </button>

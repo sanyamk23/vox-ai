@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -13,6 +14,59 @@ _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 _SANITIZE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MAX_JD_LENGTH = 4000
 _MAX_NAME_LENGTH = 100
+_MAX_RESUME_LENGTH = 8000
+_MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _extract_pdf_text(file_obj) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(file_obj.read()))
+    return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+
+
+def _extract_docx_text(file_obj) -> str:
+    from docx import Document
+    doc = Document(io.BytesIO(file_obj.read()))
+    return "\n".join(p.text for p in doc.paragraphs if p.text.strip()).strip()
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def upload_resume(request):
+    """Parse a candidate resume (PDF or DOCX) and return extracted text."""
+    file = request.FILES.get("resume")
+    if not file:
+        return JsonResponse({"status": "error", "message": "No file provided"}, status=400)
+    if file.size > _MAX_RESUME_BYTES:
+        return JsonResponse({"status": "error", "message": "File too large (max 5 MB)"}, status=400)
+
+    fname = file.name.lower()
+    try:
+        if fname.endswith(".pdf"):
+            text = _extract_pdf_text(file)
+        elif fname.endswith(".docx"):
+            text = _extract_docx_text(file)
+        else:
+            return JsonResponse(
+                {"status": "error", "message": "Only PDF and DOCX files are supported"},
+                status=400,
+            )
+    except Exception as e:
+        print(f"[Resume] Parse error: {e}")
+        return JsonResponse(
+            {"status": "error", "message": "Could not parse file — try re-saving as PDF"},
+            status=400,
+        )
+
+    if not text.strip():
+        return JsonResponse(
+            {"status": "error", "message": "No text found — file may be a scanned image"},
+            status=400,
+        )
+
+    capped = text[:_MAX_RESUME_LENGTH]
+    print(f"[Resume] Extracted {len(text)} chars → capped at {len(capped)}")
+    return JsonResponse({"status": "success", "text": capped, "chars": len(capped)})
 
 
 def _validate_e164(number: str) -> bool:
@@ -58,6 +112,7 @@ def _place_call(
     host_url: str,
     jd: str = "Software Engineer role",
     name: str = "Candidate",
+    resume_text: str = "",
     retry_num: int = 0,
     prior_transcript: list | None = None,
     prior_notes: dict | None = None,
@@ -67,6 +122,8 @@ def _place_call(
     token = str(uuid.uuid4())
 
     session_data: dict = {"jd": jd, "name": name, "phone": to_number, "retry_num": retry_num}
+    if resume_text:
+        session_data["resume_text"] = resume_text
     if prior_transcript:
         session_data["prior_transcript"] = prior_transcript
     if prior_notes:
@@ -165,6 +222,7 @@ def initiate_call(request):
 
         jd = _sanitize(raw_jd, _MAX_JD_LENGTH)
         name = _sanitize(raw_name, _MAX_NAME_LENGTH)
+        resume_text = _sanitize(data.get("resume_text") or "", _MAX_RESUME_LENGTH)
         if not jd:
             return JsonResponse({"status": "error", "message": "jd cannot be empty"}, status=400)
 
@@ -185,13 +243,14 @@ def initiate_call(request):
                 status=500,
             )
 
-        print(f"[Call] Twilio → Gemini Live (Sarah) | To: {to_number} | Candidate: {name}")
+        print(f"[Call] Twilio → Gemini Live | To: {to_number} | Candidate: {name} | Resume: {bool(resume_text)}")
         result = _place_call(
             to_number=to_number,
             from_number=from_number,
             host_url=public_url,
             jd=jd,
             name=name,
+            resume_text=resume_text,
         )
         return JsonResponse({"status": "success", "call_sid": result["call_sid"]})
 

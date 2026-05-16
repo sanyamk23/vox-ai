@@ -41,12 +41,13 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 if not session:
                     print(f"[Twilio] No session for token={token}")
 
-            name  = session.get("name")  or params.get("name")  or "Candidate"
-            jd    = session.get("jd")    or params.get("jd")    or ""
-            phone = session.get("phone") or params.get("phone") or ""
+            name        = session.get("name")        or params.get("name")        or "Candidate"
+            jd          = session.get("jd")          or params.get("jd")          or ""
+            phone       = session.get("phone")       or params.get("phone")       or ""
+            resume_text = session.get("resume_text") or params.get("resume_text") or ""
 
             # Retry context (populated on call 2 & 3)
-            retry_num       = int(session.get("retry_num", 0))
+            retry_num        = int(session.get("retry_num", 0))
             prior_transcript = session.get("prior_transcript", [])
             prior_notes      = session.get("prior_notes", {})
 
@@ -56,7 +57,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             self._retry_num = retry_num
 
             print(
-                f"[Twilio] attempt={retry_num + 1}/3 | phone={phone} | name={name}"
+                f"[Twilio] attempt={retry_num + 1}/3 | phone={phone} | name={name} | resume={bool(resume_text)}"
             )
 
             # Pre-call: parse JD → InterviewContext (guaranteed to return)
@@ -67,9 +68,9 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 f"skills={context.required_skills[:3]}"
             )
 
-            # Build system prompt — inject JD intelligence + prior context on retries
+            # Build system prompt — inject JD intelligence + resume + prior context on retries
             if jd:
-                system_prompt = build_enriched_system_prompt(name, jd, context)
+                system_prompt = build_enriched_system_prompt(name, jd, context, resume_text=resume_text)
             else:
                 system_prompt = RECRUITER_PROMPT.strip()
 

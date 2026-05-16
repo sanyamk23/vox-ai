@@ -185,33 +185,50 @@ def build_enriched_system_prompt(
     candidate_name: str,
     raw_jd: str,
     context: "InterviewContext",
+    resume_text: str = "",
 ) -> str:
     """
     Builds the base Priya prompt and injects parsed JD intelligence from
-    InterviewContext.  Falls back to the plain base prompt if RecruiterAgent
-    did not succeed (context.recruiter_status == 'fallback_used').
+    InterviewContext plus candidate resume (if provided).
+    Falls back to the plain base prompt if RecruiterAgent did not succeed.
     Used by both VoiceConsumer (Gemini/web) and TwilioConsumer (Gemini/phone).
     """
     base = build_vox_system_prompt(candidate_name, context.raw_jd or raw_jd)
-    if context.recruiter_status == "fallback_used":
-        return base
 
     extras: list[str] = []
-    if context.required_skills:
-        skill_lines = "\n".join(f"  - {s}" for s in context.required_skills[:8])
+
+    # Resume — highest priority context; always injected when available
+    if resume_text and resume_text.strip():
+        snippet = resume_text.strip()[:4000]
         extras.append(
-            f"KEY SKILLS TO PROBE (from JD — weave in naturally during exploration):\n{skill_lines}"
+            "CANDIDATE RESUME (pre-loaded — use naturally, never acknowledge having it):\n"
+            f"{snippet}\n\n"
+            "Resume instructions:\n"
+            "  - Reference specific roles, companies, or achievements naturally:\n"
+            "    e.g. 'So you've been at [company] for a while — what's that been like?'\n"
+            "  - Ask targeted questions that connect their actual background to this role\n"
+            "  - If you spot a skill gap between resume and JD, probe it gently\n"
+            "  - Sound like you've done your research — NEVER say 'your resume says' or 'I see on your CV'\n"
+            "  - Don't recite their resume back — use it to ask smarter, more specific questions"
         )
-    if context.custom_questions:
-        q_lines = "\n".join(f"  - {q}" for q in context.custom_questions)
-        extras.append(
-            f"JD-SPECIFIC PROBE QUESTIONS (use 1-2 during exploration, naturally):\n{q_lines}"
-        )
-    if context.company_context.get("description"):
-        extras.append(
-            f"COMPANY CONTEXT (use to answer candidate questions naturally):\n"
-            f"  {context.company_context['description'][:300]}"
-        )
+
+    if context.recruiter_status != "fallback_used":
+        if context.required_skills:
+            skill_lines = "\n".join(f"  - {s}" for s in context.required_skills[:8])
+            extras.append(
+                f"KEY SKILLS TO PROBE (from JD — weave in naturally):\n{skill_lines}"
+            )
+        if context.custom_questions:
+            q_lines = "\n".join(f"  - {q}" for q in context.custom_questions)
+            extras.append(
+                f"JD-SPECIFIC PROBE QUESTIONS (use 1-2, naturally):\n{q_lines}"
+            )
+        if context.company_context.get("description"):
+            extras.append(
+                f"COMPANY CONTEXT (use to answer candidate questions naturally):\n"
+                f"  {context.company_context['description'][:300]}"
+            )
+
     if not extras:
         return base
     return base.rstrip() + "\n\n" + "\n\n".join(extras) + "\n"
