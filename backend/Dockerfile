@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Force refresh code
+RUN date > /timestamp.txt
+
 COPY . .
 
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "backend.asgi:application"]
+RUN chmod +x entrypoint.sh
+CMD ["./entrypoint.sh"]

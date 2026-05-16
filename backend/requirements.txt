@@ -13,3 +13,4 @@ dj-database-url
 python-dotenv
 twilio==9.10.0
 django-cors-headers
+signalwire
