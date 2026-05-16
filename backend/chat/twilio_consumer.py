@@ -2,6 +2,7 @@ import json
 import base64
 from urllib.parse import unquote
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.core.cache import cache
 from .agent import VoiceAgent
 
 
@@ -12,12 +13,19 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             print("[Twilio] Call stream connected.")
 
             params = self._parse_query()
+            session = {}
+            token = params.get("token", "")
+            if token:
+                session = cache.get(f"vox:{token}") or {}
+                if not session:
+                    print(f"[Twilio] No session found for token={token}")
+
             self.stream_sid = None
             self.agent = VoiceAgent(
                 self,
-                job_description=params.get("jd"),
-                candidate_name=params.get("name"),
-                candidate_phone=params.get("phone"),
+                job_description=session.get("jd") or params.get("jd"),
+                candidate_name=session.get("name") or params.get("name"),
+                candidate_phone=session.get("phone") or params.get("phone"),
                 call_channel="twilio",
             )
             await self.agent.start_pipeline(encoding="mulaw")

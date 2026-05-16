@@ -5,7 +5,7 @@ import os
 import random
 import re
 import time
-from groq import AsyncGroq
+from groq import AsyncGroq, RateLimitError as GroqRateLimitError
 from deepgram import AsyncDeepgramClient
 import aiohttp
 from .mcp_server import VoxMCPTools
@@ -37,14 +37,18 @@ _SILENT_TOOL_FILLERS = [
     "Mm.", "Okay.", "Right.", "Got it.", "Noted.", "Mm-hmm.", "Sure.",
 ]
 
-# Silence watchdog prompts
+# Silence watchdog prompts — connection-check style, never "just checking"
 _SILENCE_PROMPTS = [
-    "Hello? Are you still there?",
-    "Hey, can you hear me okay?",
-    "Just checking — everything alright on your end?",
-    "Hello?",
-    "You there?",
+    "Sorry, I think we might have a bad connection — can you hear me?",
+    "Hello? Just want to make sure we're still connected.",
+    "I think the line might've cut out — are you there?",
 ]
+
+# Words that should NOT trigger barge-in interrupt (natural listener sounds)
+_BARGE_IN_FILLERS = {
+    "mm", "hmm", "okay", "ok", "yeah", "yes", "no", "haan", "hm",
+    "right", "sure", "uh", "um", "ah", "oh", "ha", "yep", "nope",
+}
 
 # Varied opening greetings — randomised each call
 _GREETINGS = [
@@ -94,29 +98,40 @@ class VoiceAgent:
         self.call_sid        = call_sid or ""
         self.call_channel    = call_channel
 
-        self.is_interrupted       = False
-        self.current_llm_task     = None
-        self.is_ai_speaking       = False
-        self.last_backchannel_time = time.time()
-        self.encoding             = "linear16"
-        self.notes: dict          = {}
-        self.turn_count: int      = 0
-        self._last_user_speech    = time.time()
-        self._silence_task        = None
-        self._active              = False
+        self.is_interrupted            = False
+        self.current_llm_task          = None
+        self.is_ai_speaking            = False
+        self.last_backchannel_time     = time.time()
+        self.encoding                  = "linear16"
+        self.notes: dict               = {}
+        self.turn_count: int           = 0
+        self._last_user_speech         = time.time()
+        self._silence_task             = None
+        self._active                   = False
+        self._watchdog_fires: int      = 0
+        self._ai_finished_speaking_at  = time.time()
 
         self.dg_key        = os.getenv("DEEPGRAM_API_KEY", "")
-        self.groq_key      = os.getenv("GROQ_API_KEY", "")
         self.sarvam_key    = os.getenv("SARVAM_API_KEY", "")
         self.sarvam_speaker = os.getenv("SARVAM_SPEAKER", _DEFAULT_SARVAM_SPEAKER).strip().lower()
         self.sarvam_model  = os.getenv("SARVAM_MODEL", "bulbul:v3").strip()
         self.el_key        = os.getenv("ELEVENLABS_API_KEY", "")
         self.el_voice_id   = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
+        # Build Groq client pool before _log_provider_config reads len(self.groq_clients)
+        _raw_keys = [
+            os.getenv("GROQ_API_KEY_1", ""),
+            os.getenv("GROQ_API_KEY_2", ""),
+            os.getenv("GROQ_API_KEY_3", ""),
+        ]
+        self.groq_clients = [AsyncGroq(api_key=k) for k in _raw_keys if k.strip()]
+        if not self.groq_clients:
+            raise RuntimeError("No GROQ_API_KEY_* found in environment")
+        self._groq_idx = 0
+
         self._log_provider_config()
 
-        self.dg_client   = AsyncDeepgramClient(api_key=self.dg_key)
-        self.groq_client = AsyncGroq(api_key=self.groq_key)
+        self.dg_client = AsyncDeepgramClient(api_key=self.dg_key)
         self.mcp         = VoxMCPTools()
 
         self.dg_context       = None
@@ -127,7 +142,7 @@ class VoiceAgent:
 
     def _log_provider_config(self) -> None:
         tts = "Sarvam" if self.sarvam_key else ("ElevenLabs" if self.el_key else "Deepgram")
-        print(f"[Vox] TTS={tts} | STT=Deepgram nova-2 multi | LLM=Groq llama-3.3-70b")
+        print(f"[Vox] TTS={tts} | STT=Deepgram nova-2 multi | LLM=Groq ({len(self.groq_clients)} key(s))")
 
     # -----------------------------------------------------------------------
     # System prompt  — built from real HR screening call research
@@ -154,22 +169,24 @@ NEVER: "Certainly!", "Of course!", "Great question!", "Absolutely!", "Definitely
 Use {name} once every 5-6 turns only.
 
 6-PHASE PLAYBOOK:
-1. OPENING (turns 1-2): Check if good time. One-sentence role tease.
+1. OPENING (turns 1-2): Check if good time. If they already said "yes", "sure", "go ahead" or similar — skip asking again, move straight to role tease.
 2. EXPLORATION (turns 3-8): "What are you working on? What does a typical day look like?" Follow threads. Probe 2-3 JD skills naturally. Ask about scale, team, impact.
 3. MOTIVATION (turns 9-11): "What's making you explore right now?" "What matters most in your next role?"
 4. LOGISTICS (turns 12-14): Current CTC → expected CTC → notice period → other offers.
 5. CANDIDATE QUESTIONS (turns 15-16): "Any quick questions before I let you go?" Answer honestly.
-6. CLOSE (turns 17+): "I'll share your profile, team will reach out in 2-3 days. Was great talking!"
+6. CLOSE (turns 17+): Ask "What time works best to have the team connect with you?" then "I'll share your profile, they'll reach out. Was great talking!"
 
-HANDLE: Busy → get callback time. Not interested → offer to send JD anyway. Short answers → "Tell me a bit more about that?" Hindi → shift to Hinglish. Competing offers → "We can expedite if that helps."
+HANDLE: Busy → get callback time. Not interested → offer to send JD anyway. Short answers → "Tell me a bit more about that?" Hindi → shift to Hinglish. Competing offers → "We can expedite if that helps." Didn't understand / off-topic → "Sorry, I think I missed that — could you say that again?"
 
 RULES (non-negotiable):
 1. ONE question per turn. Never two.
-2. MAX 2-3 sentences per turn.
+2. MAX 2-3 sentences per turn. Finish your question before anything else.
 3. save_candidate_info SILENTLY for: salary, CTC, notice period, skills, experience, availability.
 4. No markdown, bullets, asterisks — you are speaking aloud.
 5. Acknowledge what they said before asking next question.
 6. Never promise offer, salary range, timeline.
+7. CTC/salary: if candidate gives a per-month figure, multiply by 12 silently and save annual — never ask them to clarify the format.
+8. Never repeat the exact same question back-to-back. If they gave a short/unclear answer, rephrase or probe differently.
 """
 
     # -----------------------------------------------------------------------
@@ -213,9 +230,15 @@ RULES (non-negotiable):
                         if len(transcript.split()) >= 8:
                             await self._maybe_backchannel()
 
-                    # Barge-in: candidate speaks while AI is talking
+                    # Barge-in: candidate speaks while AI is talking.
+                    # Ignore short filler words (mm, okay, yeah) — only interrupt on real speech.
                     if transcript.strip() and self.is_ai_speaking:
-                        if len(transcript) > 3 or is_final:
+                        words = transcript.strip().lower().split()
+                        is_filler = (
+                            len(words) <= 2
+                            and all(w.strip(".,!?") in _BARGE_IN_FILLERS for w in words)
+                        )
+                        if not is_filler and (len(transcript) > 10 or is_final):
                             await self.handle_interrupt()
 
                     if transcript.strip() and is_final:
@@ -242,6 +265,7 @@ RULES (non-negotiable):
         await self.send_to_tts(greeting)
         self.chat_history.append({"role": "assistant", "content": greeting})
         self._last_user_speech = time.time()
+        self._ai_finished_speaking_at = time.time()
 
     async def stop_pipeline(self) -> None:
         self._active = False
@@ -263,13 +287,19 @@ RULES (non-negotiable):
     async def _silence_watchdog(self) -> None:
         while self._active:
             await asyncio.sleep(2)
-            if not self._active or self.is_ai_speaking:
+            if not self._active or self.is_ai_speaking or self.turn_count == 0:
                 continue
-            elapsed = time.time() - self._last_user_speech
-            if elapsed > 10.0 and self.turn_count > 0:
+            # Silence = time since the LATER of (user last spoke) or (AI last finished).
+            # Without this, elapsed includes the AI's own speaking time and fires
+            # 1-2 seconds after the AI stops, even though the user just hasn't replied yet.
+            last_activity = max(self._last_user_speech, self._ai_finished_speaking_at)
+            elapsed = time.time() - last_activity
+            if elapsed > 18.0 and self._watchdog_fires < 2:
+                self._watchdog_fires += 1
                 self._last_user_speech = time.time()
+                self._ai_finished_speaking_at = time.time()
                 prompt = random.choice(_SILENCE_PROMPTS)
-                print(f"[Silence-Watchdog] {elapsed:.1f}s silence")
+                print(f"[Silence-Watchdog] {elapsed:.1f}s → fire #{self._watchdog_fires}")
                 await self.send_to_tts(prompt)
 
     # -----------------------------------------------------------------------
@@ -345,24 +375,36 @@ RULES (non-negotiable):
     # LLM loop — streaming + function calling
     # -----------------------------------------------------------------------
 
+    async def _groq_create(self, **kwargs):
+        """Call Groq chat.completions.create, rotating to the next key on 429."""
+        n = len(self.groq_clients)
+        for attempt in range(n):
+            try:
+                return await self.groq_clients[self._groq_idx].chat.completions.create(**kwargs)
+            except GroqRateLimitError:
+                self._groq_idx = (self._groq_idx + 1) % n
+                print(f"[LLM] 429 → rotating to Groq key #{self._groq_idx + 1}")
+                if attempt == n - 1:
+                    raise RuntimeError("All Groq keys hit rate limit — try again later")
+
     async def _run_llm_loop(self) -> None:
         try:
             messages = list(self.chat_history)
             messages.append({"role": "system", "content": self._build_context_note()})
 
-            response = await self.groq_client.chat.completions.create(
+            response = await self._groq_create(
                 messages=messages,
                 model="llama-3.3-70b-versatile",
                 tools=self.mcp.get_tool_definitions(),
                 tool_choice="auto",
                 stream=True,
-                max_tokens=120,     # 1-3 conversational sentences — keeps latency tight
+                max_tokens=120,
                 temperature=0.85,
                 top_p=0.95,
             )
 
-            ai_text      = ""
-            sentence_buf = ""
+            ai_text          = ""
+            sentence_buf     = ""
             tool_accumulator: dict = {}
 
             async for chunk in response:
@@ -371,7 +413,6 @@ RULES (non-negotiable):
 
                 delta = chunk.choices[0].delta
 
-                # Accumulate tool-call fragments (arrive across multiple chunks)
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
                         idx = tc.index
@@ -388,16 +429,12 @@ RULES (non-negotiable):
                 content       = delta.content or ""
                 ai_text      += content
                 sentence_buf += content
-
-                # Flush to TTS on sentence-ending punctuation (minimum latency)
-                # or on comma with ≥20 chars in buffer (faster delivery mid-sentence)
-                at_sentence_end  = any(p in content for p in [".", "!", "?", "\n"])
-                at_natural_break = "," in content and len(sentence_buf) >= 20
-                if (at_sentence_end or at_natural_break) and sentence_buf.strip():
+                at_end   = any(p in content for p in [".", "!", "?", "\n"])
+                at_break = "," in content and len(sentence_buf) >= 20
+                if (at_end or at_break) and sentence_buf.strip():
                     await self.send_to_tts(sentence_buf.strip())
                     sentence_buf = ""
 
-            # Flush any trailing fragment
             if sentence_buf.strip() and not self.is_interrupted:
                 await self.send_to_tts(sentence_buf.strip())
 
@@ -413,6 +450,7 @@ RULES (non-negotiable):
             print(f"[LLM-Error] {e}")
         finally:
             self.is_ai_speaking = False
+            self._ai_finished_speaking_at = time.time()
 
     async def _handle_tool_calls(self, tool_accumulator: dict, assistant_content: str) -> None:
         tc_list = [
@@ -452,15 +490,9 @@ RULES (non-negotiable):
             if tool_name not in _SILENT_TOOLS:
                 has_non_silent = True
 
-        # If ALL tools were silent AND no text was spoken → dead air.
-        # Play a brief filler immediately so the user hears something
-        # while the follow-up LLM call generates the next question.
         if not has_non_silent and not assistant_content and not self.is_interrupted:
-            filler = random.choice(_SILENT_TOOL_FILLERS)
-            await self.send_to_tts(filler)
+            await self.send_to_tts(random.choice(_SILENT_TOOL_FILLERS))
 
-        # Follow-up: non-silent tool needs verbalisation,
-        # or all-silent tool with no text also needs a follow-up question.
         if (has_non_silent or not assistant_content) and not self.is_interrupted:
             await self._stream_followup()
 
@@ -469,7 +501,7 @@ RULES (non-negotiable):
             messages = list(self.chat_history)
             messages.append({"role": "system", "content": self._build_context_note()})
 
-            followup = await self.groq_client.chat.completions.create(
+            followup = await self._groq_create(
                 messages=messages,
                 model="llama-3.3-70b-versatile",
                 stream=True,
@@ -708,12 +740,12 @@ RULES (non-negotiable):
                 "}"
             )
             messages = self.chat_history + [{"role": "user", "content": summary_prompt}]
-            resp = await self.groq_client.chat.completions.create(
+            resp = await self._groq_create(
                 messages=messages,
                 model="llama-3.3-70b-versatile",
                 stream=False,
                 max_tokens=900,
-                temperature=0.1,    # near-deterministic for structured extraction
+                temperature=0.1,
             )
             raw = resp.choices[0].message.content.strip()
             raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)

@@ -1,8 +1,9 @@
 import json
 import os
 import re
-from urllib.parse import quote
+import uuid
 
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -82,10 +83,11 @@ def initiate_call(request):
         if not stream_url.startswith("ws"):
             stream_url = f"wss://{stream_url}"
 
-        ws_url = (
-            f"{stream_url}/ws/twilio/"
-            f"?jd={quote(jd)}&name={quote(name)}&phone={quote(to_number)}"
-        )
+        # Store session data in Redis cache to keep the WebSocket URL short.
+        # Twilio rejects URLs that are too long when JD is embedded directly.
+        token = str(uuid.uuid4())
+        cache.set(f"vox:{token}", {"jd": jd, "name": name, "phone": to_number}, timeout=3600)
+        ws_url = f"{stream_url}/ws/twilio/?token={token}"
         twiml = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             f'<Response><Connect><Stream url="{ws_url}" /></Connect></Response>'

@@ -42,6 +42,9 @@ services:
       - SIGNALWIRE_TOKEN=${SIGNALWIRE_TOKEN:-}
       - SIGNALWIRE_SPACE=${SIGNALWIRE_SPACE:-}
       - SIGNALWIRE_PHONE_NUMBER=${SIGNALWIRE_PHONE_NUMBER:-}
+      - GROQ_API_KEY_1=${GROQ_API_KEY_1}
+      - GROQ_API_KEY_2=${GROQ_API_KEY_2:-}
+      - GROQ_API_KEY_3=${GROQ_API_KEY_3:-}
     depends_on:
       db:
         condition: service_healthy
