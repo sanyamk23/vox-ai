@@ -4,7 +4,8 @@ from urllib.parse import unquote
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-from .agent import build_vox_system_prompt
+from .agent import build_enriched_system_prompt
+from .agents.manager import AgentManager
 from .gemini_recruiter import GeminiLiveBridge
 
 
@@ -20,9 +21,17 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         self._jd = params.get("jd") or "Software Engineer at a high-growth startup."
         self._phone = params.get("phone") or ""
 
+        # Pre-call: parse JD → InterviewContext (guaranteed to return even on failure)
+        manager = AgentManager(session_id=self.channel_name)
+        context = await manager.prepare_session(jd=self._jd, candidate_name=self._name)
+        print(
+            f"[WebSocket] Recruiter: {context.recruiter_status} | "
+            f"skills={context.required_skills[:3]}"
+        )
+
         self.bridge = GeminiLiveBridge(
             mode="web",
-            system_prompt=build_vox_system_prompt(self._name, self._jd),
+            system_prompt=build_enriched_system_prompt(self._name, self._jd, context),
             on_send_web_audio=self.send_audio,
             on_transcript=self.send_transcript,
             on_interrupt=self.send_interrupt,
@@ -32,6 +41,7 @@ class VoiceConsumer(AsyncWebsocketConsumer):
             candidate_phone=self._phone,
             job_description=self._jd,
             call_channel="web",
+            interview_context=context,
         )
         self._bridge_task = asyncio.create_task(self._run_bridge())
 
@@ -63,10 +73,16 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         print(f"[WebSocket] Disconnected (code={close_code})")
         if hasattr(self, "bridge"):
             self.bridge.close()
-        if hasattr(self, "_bridge_task"):
-            self._bridge_task.cancel()
+        if hasattr(self, "_bridge_task") and not self._bridge_task.done():
             try:
-                await self._bridge_task
+                await asyncio.wait_for(self._bridge_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                print("[WebSocket] Bridge finalize timed out — force-cancelling")
+                self._bridge_task.cancel()
+                try:
+                    await self._bridge_task
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -92,3 +108,5 @@ class VoiceConsumer(AsyncWebsocketConsumer):
 
     async def send_recap(self, score, reason):
         await self.send(text_data=json.dumps({"type": "recap", "data": {"score": score, "reason": reason}}))
+
+

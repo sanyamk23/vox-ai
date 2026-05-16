@@ -8,6 +8,7 @@ import base64
 import os
 import re
 import struct
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -44,9 +45,13 @@ Conduct a 10-15 minute initial screening call to evaluate a candidate's fit for 
 4. **Logistics & Compensation (Turn 10-12)**:
    - Transition smoothly: "Now, just to make sure we're aligned on the practical side..."
    - Mandatory: Current CTC, Expected CTC (LPA), and Notice Period.
-5. **Closing & Next Steps (Turn 13+)**:
+5. **Closing & Next Steps (Turn 13+ or if candidate wants to end)**:
    - Invite 1-2 quick questions.
-   - Close: "I'll be syncing with the hiring manager this evening. Expect an update by tomorrow morning."
+   - Close: "I'll be syncing with the hiring manager this evening. Expect an update by tomorrow morning. We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
+
+# SESSION TERMINATION
+- **End Detection**: If the candidate says "bye", "goodbye", "thanks, talk soon", or otherwise indicates they want to end the call, transition immediately to your final closing sentence.
+- **MANDATORY**: When you have finished your final closing sentence and are ready to terminate the session, you MUST say exactly "[END_CALL]" at the very end of your response. This is a technical signal required to stop voice detection and close the call.
 
 # LINGUISTIC MIRRORING & EMPOWERMENT
 - **Primary Rule**: Detect and mirror the candidate's language on a **turn-by-turn basis**.
@@ -69,6 +74,7 @@ Conduct a 10-15 minute initial screening call to evaluate a candidate's fit for 
 - **Active Listening**: Use verbal bridges ("Got it," "That makes sense," "Interesting point") to show you are following.
 - **Hinglish/Multilingual**: If the candidate uses Hindi or Hinglish, mirror their language naturally to build comfort.
 - **No Bullet Points**: Speak in natural, flowing sentences. Use fillers like "actually," "basically," and "to be honest" to sound human.
+- **Mandatory Closing Sentence**: Your final sentence should be: "We are looking forward for you whenever you make your mind around then let us know. [END_CALL]"
 """
 
 
@@ -105,6 +111,14 @@ GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Aoede")
 SARAH_GREETING_KICKOFF = (
     "Please call the candidate now, do the greeting, and check their available time."
 )
+
+# Phrases that signal Priya has wrapped up the call — used for auto-hangup
+_HANGUP_SIGNALS = frozenset({
+    "was great talking", "great talking with you", "great speaking with you",
+    "nice talking with you", "have a great day", "have a great evening",
+    "have a great night", "take care and bye", "talk to you soon",
+    "we'll be in touch", "goodbye", "let you go now", "catch up soon",
+})
 
 WEB_OUTPUT_RATE = 24000
 TWILIO_OUTPUT_RATE = 8000
@@ -241,12 +255,14 @@ class GeminiLiveBridge:
         on_transcript: Callable[[str, str], Awaitable[None]] | None = None,
         on_interrupt: Callable[[], Awaitable[None]] | None = None,
         on_ready: Callable[[], Awaitable[None]] | None = None,
+        on_call_ended: Callable[[bool, float], Awaitable[None]] | None = None,
         finalize_consumer: Any = None,
         candidate_name: str = "there",
         candidate_phone: str = "",
         job_description: str = "",
         call_sid: str = "",
         call_channel: str = "web",
+        interview_context: Any = None,
     ):
         self._mode = mode
         self._system_prompt = system_prompt
@@ -256,12 +272,14 @@ class GeminiLiveBridge:
         self._on_transcript = on_transcript
         self._on_interrupt = on_interrupt
         self._on_ready = on_ready
+        self._on_call_ended = on_call_ended
         self._finalize_consumer = finalize_consumer
         self._candidate_name = candidate_name
         self._candidate_phone = candidate_phone
         self._job_description = job_description
         self._call_sid = call_sid
         self._call_channel = call_channel
+        self._interview_context = interview_context
 
         self._inbound_twilio: asyncio.Queue[dict] = asyncio.Queue()
         self._inbound_pcm: asyncio.Queue[bytes] = asyncio.Queue()
@@ -270,11 +288,18 @@ class GeminiLiveBridge:
         self.stream_sid: str | None = None
         self.transcript: list[str] = []
         self._transcript_agg: TurnTranscriptAggregator | None = None
+        # Duration tracking — set when Twilio stream "start" fires
+        self._stream_start_time: float | None = None
+        self._call_duration: float = 0.0
+        self._finalized: bool = False
+        self._goodbye_task: asyncio.Task | None = None
         if on_transcript:
             self._transcript_agg = TurnTranscriptAggregator(
                 on_flush=self._emit_transcript_turn,
                 on_session_line=self.transcript.append,
             )
+        self._ending = False
+        self._close_task: asyncio.Task | None = None
 
     def enqueue_twilio_event(self, data: dict) -> None:
         self._inbound_twilio.put_nowait(data)
@@ -282,10 +307,18 @@ class GeminiLiveBridge:
     def feed_pcm(self, chunk: bytes) -> None:
         if chunk:
             self._inbound_pcm.put_nowait(chunk)
-
     async def _emit_transcript_turn(self, role: str, sentence: str) -> None:
-        if not self._on_transcript:
+        if role == "vox" and "[END_CALL]" in sentence:
+            print("[Gemini] End-of-call signal detected. Scheduling close...")
+            sentence = sentence.replace("[END_CALL]", "").strip()
+            self._ending = True
+            if self._close_task:
+                self._close_task.cancel()
+            self._close_task = asyncio.create_task(self._delayed_close(6.0))
+
+        if not sentence:
             return
+
         label = (
             "[Gemini AI Recruiter]"
             if self._mode == "twilio" and role == "vox"
@@ -293,9 +326,21 @@ class GeminiLiveBridge:
             else "[Candidate]"
         )
         print(f"{label} {sentence}")
-        await self._on_transcript(role, sentence)
+        if self._on_transcript:
+            await self._on_transcript(role, sentence)
+
+    async def _delayed_close(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        print("[Gemini] Closing session after delay.")
+        self._closed.set()
 
     async def run(self) -> None:
+        try:
+            await self._run_inner()
+        finally:
+            await self._finalize()
+
+    async def _run_inner(self) -> None:
         api_key = _gemini_api_key()
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")
@@ -365,6 +410,7 @@ class GeminiLiveBridge:
                             start = data.get("start", {})
                             self.stream_sid = start.get("streamSid")
                             self._call_sid = start.get("callSid", "")
+                            self._stream_start_time = time.time()
                             print(f"[Twilio] Stream ID: {self.stream_sid}")
                             await _send_greeting()
                         elif event == "media":
@@ -444,9 +490,35 @@ class GeminiLiveBridge:
                                         self.transcript.append(f"AI: {ot.text}")
                                         if self._on_transcript:
                                             await self._on_transcript("vox", ot.text)
+                                    # Auto-hangup: when AI says goodbye on a Twilio call,
+                                    # end the call after a brief pause so the audio plays out
+                                    if (
+                                        ot.finished
+                                        and self._mode == "twilio"
+                                        and not self._closed.is_set()
+                                        and len(self.transcript) >= 8
+                                        and not (self._goodbye_task and not self._goodbye_task.done())
+                                    ):
+                                        text_lower = (ot.text or "").lower()
+                                        if any(sig in text_lower for sig in _HANGUP_SIGNALS):
+                                            print(
+                                                f"[Twilio] AI said goodbye "
+                                                f"(turn {len(self.transcript)}) — "
+                                                "scheduling auto-hangup in 8s"
+                                            )
+                                            self._goodbye_task = asyncio.create_task(
+                                                self._delayed_hangup(delay=8.0)
+                                            )
 
                                 if sc.input_transcription:
                                     it = sc.input_transcription
+                                    if it.text and self._ending:
+                                        print("[Gemini] User spoke during shutdown window — cancelling close.")
+                                        self._ending = False
+                                        if self._close_task:
+                                            self._close_task.cancel()
+                                            self._close_task = None
+
                                     if agg:
                                         await agg.push("user", it.text, it.finished)
                                     elif it.text:
@@ -484,30 +556,92 @@ class GeminiLiveBridge:
                 except (asyncio.CancelledError, Exception):
                     pass
 
-        await self._finalize()
-
     async def _finalize(self) -> None:
-        if self._transcript_agg:
-            await self._transcript_agg.flush_all()
-        if not self.transcript:
+        if self._finalized:
             return
-        if self._finalize_consumer:
-            await finalize_gemini_session(
-                self._finalize_consumer,
-                self.transcript,
-                candidate_name=self._candidate_name,
-                candidate_phone=self._candidate_phone,
-                job_description=self._job_description,
-                call_sid=self._call_sid,
-                call_channel=self._call_channel,
-            )
+        self._finalized = True
+
+        if self._goodbye_task and not self._goodbye_task.done():
+            self._goodbye_task.cancel()
+
+        try:
+            if self._transcript_agg:
+                await self._transcript_agg.flush_all()
+        except Exception:
+            pass
+
+        # Compute call duration (0 if stream never started — e.g. no-answer)
+        if self._stream_start_time is not None:
+            self._call_duration = time.time() - self._stream_start_time
         else:
-            await process_post_call_summary(self.transcript)
+            self._call_duration = 0.0
+
+        # Fire on_call_ended FIRST — retry must not wait for slow DB/summary calls
+        if self._on_call_ended:
+            from .retry_manager import CallRetryManager
+            was_dropped = CallRetryManager.is_dropped(self.transcript, self._call_duration)
+            try:
+                await self._on_call_ended(was_dropped, self._call_duration)
+            except Exception as exc:
+                print(f"[Gemini] on_call_ended callback failed: {exc}")
+
+        # DB save + scorecard (slow — runs after retry is already scheduled)
+        try:
+            if self.transcript and self._finalize_consumer:
+                await finalize_gemini_session(
+                    self._finalize_consumer,
+                    self.transcript,
+                    candidate_name=self._candidate_name,
+                    candidate_phone=self._candidate_phone,
+                    job_description=self._job_description,
+                    call_sid=self._call_sid,
+                    call_channel=self._call_channel,
+                    interview_context=self._interview_context,
+                )
+            elif self.transcript:
+                await process_post_call_summary(self.transcript)
+        except Exception as e:
+            print(f"[Gemini] Post-call finalization error: {e}")
+
+    async def _try_end_call(self) -> None:
+        """Call Twilio REST API to hang up the call programmatically."""
+        if not self._call_sid:
+            return
+        try:
+            from twilio.rest import Client
+            account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+            auth_token  = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+            if not (account_sid and auth_token):
+                return
+            call_sid = self._call_sid
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: Client(account_sid, auth_token).calls(call_sid).update(status="completed"),
+            )
+            print(f"[Twilio] Call {call_sid} ended by AI (natural close).")
+        except Exception as e:
+            print(f"[Twilio] Auto-hangup REST call failed: {e}")
+
+    async def _delayed_hangup(self, delay: float = 8.0) -> None:
+        """Sleep to let audio finish, then hang up the Twilio call."""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self._closed.is_set():
+            return
+        print("[Twilio] Auto-ending call after AI goodbye.")
+        self._closed.set()
+        self._inbound_twilio.put_nowait({"event": "stop"})
+        await self._try_end_call()
 
     def close(self) -> None:
         self._closed.set()
         if self._mode == "twilio":
             self._inbound_twilio.put_nowait({"event": "stop"})
+        if self._goodbye_task and not self._goodbye_task.done():
+            self._goodbye_task.cancel()
 
 
 # Backward-compatible alias
@@ -531,7 +665,7 @@ Transcript:
 """
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model=GEMINI_SUMMARY_MODEL,
             contents=summary_prompt,
         )

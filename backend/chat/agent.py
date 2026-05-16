@@ -1,17 +1,13 @@
-import asyncio
-import base64
+from __future__ import annotations
+
 import json
-import os
-import random
-import re
-import time
-from groq import AsyncGroq, RateLimitError as GroqRateLimitError
-from deepgram import AsyncDeepgramClient
-import aiohttp
-from .mcp_server import VoxMCPTools
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .agents.schemas import InterviewContext
 
 # ---------------------------------------------------------------------------
-# Constants
+# System prompt helpers — used by both web and Twilio Gemini consumers
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SARVAM_SPEAKER = "shreya"
@@ -87,6 +83,7 @@ def _phase_for(turn: int) -> str:
     return "closing"
 
 
+
 def build_vox_system_prompt(
     candidate_name: str = "there",
     job_description: str = "Software Engineer at a high-growth startup.",
@@ -129,6 +126,8 @@ The role you are hiring for is: {jd}
 - **Hinglish Capability**: Naturally blend English and Hindi (Haan, Bilkul, Achha) if {name} does so.
 - **One Question Policy**: Never ask multiple questions in a single turn.
 - **Speech Optimization**: No markdown, no bullets, no special characters. You are speaking, not writing.
+- CTC/salary: if candidate gives a per-month figure, multiply by 12 silently and save annual — never ask them to clarify the format.
+- Never repeat the exact same question back-to-back. If they gave a short/unclear answer, rephrase or probe differently.
 """
 
 VOX_GREETING_KICKOFF = (
@@ -136,27 +135,46 @@ VOX_GREETING_KICKOFF = (
     "Check if it's a good time to talk, then briefly tease the role."
 )
 
-_SUMMARY_JSON_INSTRUCTION = (
-    "Based on this screening call, produce ONLY a valid JSON object — "
-    "no markdown, no code fences, no extra text. "
-    "Be specific and honest. Base every field strictly on what was actually said. "
-    "Use null for anything not discussed — do NOT infer or fabricate.\n\n"
-    "{\n"
-    '  "summary_bullets": ["3-5 specific bullets — quote actual things said, not generic observations"],\n'
-    '  "skills_verified": ["skills the candidate explicitly confirmed they have"],\n'
-    '  "salary_expectation_lpa": <number or null>,\n'
-    '  "current_ctc_lpa": <number or null>,\n'
-    '  "notice_period_days": <number or null — convert: "1 month"=30, "2 months"=60, "immediate"=0>,\n'
-    '  "joining_timeline": "<candidate\'s own words or null>",\n'
-    '  "other_offers": <true/false/null — are they interviewing elsewhere?>,\n'
-    '  "intent_score": <integer 1-10 — 10=extremely excited, 1=clearly not interested>,\n'
-    '  "call_outcome": "<INTERESTED|BUSY|NOT_INTERESTED|CALLBACK_REQUESTED|CONFUSED>",\n'
-    '  "vibe_check": "<one specific, honest sentence about the candidate\'s energy and fit>",\n'
-    '  "hr_flags": ["specific red flags or concerns — be honest; empty array if none"],\n'
-    '  "recommended_next_step": "<specific action for the hiring team>"\n'
-    "}"
-)
 
+def build_enriched_system_prompt(
+    candidate_name: str,
+    raw_jd: str,
+    context: "InterviewContext",
+) -> str:
+    """
+    Builds the base Priya prompt and injects parsed JD intelligence from
+    InterviewContext.  Falls back to the plain base prompt if RecruiterAgent
+    did not succeed (context.recruiter_status == 'fallback_used').
+    Used by both VoiceConsumer (Gemini/web) and TwilioConsumer (Gemini/phone).
+    """
+    base = build_vox_system_prompt(candidate_name, context.raw_jd or raw_jd)
+    if context.recruiter_status == "fallback_used":
+        return base
+
+    extras: list[str] = []
+    if context.required_skills:
+        skill_lines = "\n".join(f"  - {s}" for s in context.required_skills[:8])
+        extras.append(
+            f"KEY SKILLS TO PROBE (from JD — weave in naturally during exploration):\n{skill_lines}"
+        )
+    if context.custom_questions:
+        q_lines = "\n".join(f"  - {q}" for q in context.custom_questions)
+        extras.append(
+            f"JD-SPECIFIC PROBE QUESTIONS (use 1-2 during exploration, naturally):\n{q_lines}"
+        )
+    if context.company_context.get("description"):
+        extras.append(
+            f"COMPANY CONTEXT (use to answer candidate questions naturally):\n"
+            f"  {context.company_context['description'][:300]}"
+        )
+    if not extras:
+        return base
+    return base.rstrip() + "\n\n" + "\n\n".join(extras) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Post-call evaluation — uses EvaluationAgent (retries + structured fallback)
+# ---------------------------------------------------------------------------
 
 async def finalize_gemini_session(
     consumer,
@@ -167,45 +185,57 @@ async def finalize_gemini_session(
     job_description: str = "",
     call_sid: str = "",
     call_channel: str = "web",
+    interview_context=None,
 ) -> None:
-    """End-of-call scorecard using Gemini transcript lines (AI:/USER: prefixes)."""
+    """
+    End-of-call scorecard using EvaluationAgent.
+    Guaranteed to return — falls back gracefully if evaluation fails.
+    Populates all DB fields including dimension_scores and eval_confidence.
+    """
     if not transcript:
         return
 
-    from .gemini_recruiter import GEMINI_SUMMARY_MODEL, _gemini_api_key
+    # Convert raw "AI: ..." / "USER: ..." lines → chat-dict format the evaluator expects
+    chat_transcript = [
+        {
+            "role": "assistant" if line.startswith("AI:") else "user",
+            "content": line.split(":", 1)[-1].strip(),
+        }
+        for line in transcript
+        if ":" in line and line.strip()
+    ]
+
+    from .agents.evaluator import EvaluationAgent
+    from .agents.schemas import InterviewContext
+    from .gemini_recruiter import _gemini_api_key
+    from google import genai
 
     api_key = _gemini_api_key()
     if not api_key:
         print("[Finalize] GEMINI_API_KEY missing — skipping recap")
+        await consumer.send_recap("N/A", json.dumps({
+            "summary_bullets": ["API key not configured"],
+            "call_outcome": "CONFUSED",
+        }))
         return
 
-    transcript_body = "\n".join(transcript)
+    context = interview_context or InterviewContext(raw_jd=job_description)
+
     try:
-        from google import genai
-
         client = genai.Client(api_key=api_key)
-        prompt = f"{_SUMMARY_JSON_INSTRUCTION}\n\nTranscript:\n{transcript_body}"
-        response = client.models.generate_content(
-            model=GEMINI_SUMMARY_MODEL,
-            contents=prompt,
-        )
-        raw = (response.text or "").strip()
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
+        evaluator = EvaluationAgent(gemini_client=client, interview_context=context)
+        # Tight timeout for finalization — single attempt, fallback is good enough
+        evaluator.timeout_seconds = 12.0
+        evaluator.max_retries = 0
 
-        analysis: dict = json.loads(raw)
-        score = analysis.get("intent_score")
-        outcome = analysis.get("call_outcome", "CONFUSED")
-        if outcome not in _VALID_OUTCOMES:
-            outcome = "CONFUSED"
-        analysis["call_outcome"] = outcome
+        report = await evaluator.run_with_guardrails(chat_transcript, {}, context)
+        report_dict = report.to_dict()
 
-        summary_text = "\n".join(analysis.get("summary_bullets", []))
-        chat_transcript = [
-            {"role": "assistant" if line.startswith("AI:") else "user", "content": line.split(":", 1)[-1].strip()}
-            for line in transcript
-            if ":" in line
-        ]
+        summary_text = "\n".join(report.summary_bullets)
+        dim_scores = {
+            k: getattr(report, k).to_dict() if getattr(report, k) else None
+            for k in ("technical_fit", "communication", "motivation_fit", "logistics_fit")
+        }
 
         from .models import CallSession
         from django.utils import timezone
@@ -216,21 +246,34 @@ async def finalize_gemini_session(
             candidate_phone=candidate_phone,
             job_description=job_description,
             transcript=chat_transcript,
-            notes=analysis,
+            notes=report_dict,
             summary=summary_text,
-            intent_score=score,
-            call_outcome=outcome,
+            intent_score=report.intent_score,
+            call_outcome=report.call_outcome,
             call_channel=call_channel,
             ended_at=timezone.now(),
+            interview_context=context.to_dict() if hasattr(context, "to_dict") else {},
+            dimension_scores=dim_scores,
+            eval_confidence=report.overall_confidence,
+            eval_reasoning=report.reasoning,
         )
-        print(f"[Vox] Gemini session saved — Score:{score} Outcome:{outcome}")
-        await consumer.send_recap(score, json.dumps(analysis))
-    except json.JSONDecodeError as e:
-        print(f"[Finalize-JSON] {e}")
-        await consumer.send_recap("N/A", "Summary generation failed")
+        print(
+            f"[Vox] Session saved — Score:{report.intent_score} "
+            f"Outcome:{report.call_outcome} "
+            f"Confidence:{report.overall_confidence:.2f} "
+            f"Evaluator:{report.evaluator_status}"
+        )
+        await consumer.send_recap(report.intent_score, json.dumps(report_dict))
+
     except Exception as e:
         print(f"[Finalize-Error] {e}")
-        await consumer.send_recap("N/A", str(e))
+        await consumer.send_recap("N/A", json.dumps({
+            "summary_bullets": ["Evaluation failed — review transcript manually"],
+            "call_outcome": "CONFUSED",
+            "intent_score": None,
+            "hr_flags": ["Auto-evaluation error — check backend logs"],
+            "evaluator_status": "error",
+        }))
 
 
 class VoiceAgent:

@@ -58,11 +58,21 @@ def _place_call(
     host_url: str,
     jd: str = "Software Engineer role",
     name: str = "Candidate",
+    retry_num: int = 0,
+    prior_transcript: list | None = None,
+    prior_notes: dict | None = None,
     use_legacy_ws_prefix: bool = False,
 ) -> dict:
     clean_host = _clean_host(host_url)
     token = str(uuid.uuid4())
-    cache.set(f"vox:{token}", {"jd": jd, "name": name, "phone": to_number}, timeout=3600)
+
+    session_data: dict = {"jd": jd, "name": name, "phone": to_number, "retry_num": retry_num}
+    if prior_transcript:
+        session_data["prior_transcript"] = prior_transcript
+    if prior_notes:
+        session_data["prior_notes"] = prior_notes
+
+    cache.set(f"vox:{token}", session_data, timeout=3600)
     stream_path = _media_stream_path(use_legacy_ws_prefix)
     stream_url = f"wss://{clean_host}/{stream_path}?token={token}"
     twiml = _build_twiml(stream_url)

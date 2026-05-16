@@ -1,8 +1,6 @@
 django>=4.2
 channels[daphne]>=4.0
 channels-redis>=4.1
-deepgram-sdk>=3.0
-groq>=0.9
 aiohttp>=3.9
 opentelemetry-api
 opentelemetry-sdk
@@ -13,5 +11,6 @@ dj-database-url
 python-dotenv
 twilio==9.10.0
 django-cors-headers
+pydub
 google-genai>=1.0
 audioop-lts>=0.2.1; python_version >= "3.13"

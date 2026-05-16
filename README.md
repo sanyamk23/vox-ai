@@ -17,9 +17,8 @@ Project Vox is an ultra-low-latency, production-grade Voice AI screening agent d
 
 ## 🛠️ Tech Stack
 
-- **Brain**: [Groq](https://groq.com/) (Llama-3.3-70b) for lightning-fast inference.
-- **Ears**: [Deepgram Nova-2](https://deepgram.com/) for real-time STT with VAD.
-- **Voice**: [Deepgram Aura-Orpheus](https://deepgram.com/) for natural human speech synthesis.
+- **Brain / Voice / Ears**: [Gemini Live](https://ai.google.dev/) — end-to-end real-time audio (STT + LLM + TTS in one stream).
+- **JD Parsing & Scoring**: Gemini (gemini-2.5-flash) for pre-call JD analysis and post-call evaluation.
 - **Backend**: Django ASGI (Daphne) + WebSockets (Channels).
 - **Frontend**: React + TailwindCSS (Glassmorphic Command Center).
 - **Infrastructure**: Docker Compose + Redis (Channel Layers).
@@ -37,8 +36,7 @@ Project Vox is an ultra-low-latency, production-grade Voice AI screening agent d
 Create a `.env` file in the root directory:
 
 ```env
-DEEPGRAM_API_KEY=your_key
-GROQ_API_KEY=your_key
+GEMINI_API_KEY=your_key
 TWILIO_ACCOUNT_SID=your_sid
 TWILIO_AUTH_TOKEN=your_token
 TWILIO_PHONE_NUMBER=your_twilio_number
@@ -59,6 +57,38 @@ docker-compose up --build
 3. Verify the candidate's phone number in your Twilio Console.
 4. Use the **Command Center** UI to trigger an outbound call.
 5. **Note**: If using a Twilio Trial account, press any key on your phone after answering to bridge the AI.
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+Project Vox uses a multi-layered testing strategy (Unit, Component, E2E) to ensure conversational stability.
+
+### Running Tests Locally
+Ensure the Docker containers are running, then execute:
+```bash
+./scripts/run_tests.sh
+```
+
+### Pre-commit Hooks
+We use `pre-commit` to ensure all tests pass and code is clean before every commit.
+
+1. Install pre-commit:
+   ```bash
+   pip install pre-commit
+   ```
+2. Install the hooks:
+   ```bash
+   pre-commit install
+   ```
+3. (Optional) Run against all files:
+   ```bash
+   pre-commit run --all-files
+   ```
+
+The pre-commit pipeline includes:
+- **Linting**: Trailing whitespace, EOF fixing, YAML validation.
+- **Logic Verification**: Automatic execution of the full 18-test suite in the backend container.
 
 ---
 
