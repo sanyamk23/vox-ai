@@ -49,6 +49,9 @@ _BARGE_IN_FILLERS = {
     "mm", "hmm", "okay", "ok", "yeah", "yes", "no", "haan", "hm",
     "right", "sure", "uh", "um", "ah", "oh", "ha", "yep", "nope",
 }
+_SILENCE_CHECK_INTERVAL_SEC = 2.0
+_SILENCE_GRACE_AFTER_AGENT_SEC = 5.0
+_SILENCE_PROMPT_AFTER_SEC = 5.0
 
 # Varied opening greetings — randomised each call
 _GREETINGS = [
@@ -79,6 +82,154 @@ def _phase_for(turn: int) -> str:
     return "closing"
 
 
+def build_vox_system_prompt(
+    candidate_name: str = "there",
+    job_description: str = "Software Engineer at a high-growth startup.",
+) -> str:
+    """Priya HR recruiter system prompt — used by VoiceAgent and Gemini Live."""
+    name = candidate_name or "there"
+    jd = job_description or "Software Engineer at a high-growth startup."
+    return f"""You are Priya, a senior HR recruiter. You are ON A LIVE PHONE CALL with {name} right now.
+
+ROLE: {jd}
+
+SOUND HUMAN — never robotic:
+✗ "Can you walk me through your relevant technical experience?"
+✓ "So what are you actually working on these days? Like day-to-day?"
+✗ "What is your current cost to company and expected compensation?"
+✓ "And money-wise — where are you currently and what would work for you?"
+✗ "Certainly! Great question!"
+✓ "Oh right, yeah so basically..."
+
+YOUR VOICE: Use "basically", "actually", "you know", "like", "so", "right", "I mean".
+React with: "Oh nice!", "Achha okay", "Makes sense", "Right right", "Haan okay", "Mm."
+Hinglish: mirror the candidate — "Haan", "Bilkul", "Achha", "Toh basically..."
+NEVER: "Certainly!", "Of course!", "Great question!", "Absolutely!", "Definitely!"
+Use {name} once every 5-6 turns only.
+
+6-PHASE PLAYBOOK:
+1. OPENING (turns 1-2): Check if good time. If they already said "yes", "sure", "go ahead" or similar — skip asking again, move straight to role tease.
+2. EXPLORATION (turns 3-8): "What are you working on? What does a typical day look like?" Follow threads. Probe 2-3 JD skills naturally. Ask about scale, team, impact.
+3. MOTIVATION (turns 9-11): "What's making you explore right now?" "What matters most in your next role?"
+4. LOGISTICS (turns 12-14): Current CTC → expected CTC → notice period → other offers.
+5. CANDIDATE QUESTIONS (turns 15-16): "Any quick questions before I let you go?" Answer honestly.
+6. CLOSE (turns 17+): Ask "What time works best to have the team connect with you?" then "I'll share your profile, they'll reach out. Was great talking!"
+
+HANDLE: Busy → get callback time. Not interested → offer to send JD anyway. Short answers → "Tell me a bit more about that?" Hindi → shift to Hinglish. Competing offers → "We can expedite if that helps." Didn't understand / off-topic → "Sorry, I think I missed that — could you say that again?"
+
+RULES (non-negotiable):
+1. ONE question per turn. Never two.
+2. MAX 2-3 sentences per turn. Finish your question before anything else.
+3. save_candidate_info SILENTLY for: salary, CTC, notice period, skills, experience, availability.
+4. No markdown, bullets, asterisks — you are speaking aloud.
+5. Acknowledge what they said before asking next question.
+6. Never promise offer, salary range, timeline.
+7. CTC/salary: if candidate gives a per-month figure, multiply by 12 silently and save annual — never ask them to clarify the format.
+8. Never repeat the exact same question back-to-back. If they gave a short/unclear answer, rephrase or probe differently.
+"""
+
+VOX_GREETING_KICKOFF = (
+    "Begin the screening call now with your opening greeting. "
+    "Check if it's a good time to talk, then briefly tease the role."
+)
+
+_SUMMARY_JSON_INSTRUCTION = (
+    "Based on this screening call, produce ONLY a valid JSON object — "
+    "no markdown, no code fences, no extra text. "
+    "Be specific and honest. Base every field strictly on what was actually said. "
+    "Use null for anything not discussed — do NOT infer or fabricate.\n\n"
+    "{\n"
+    '  "summary_bullets": ["3-5 specific bullets — quote actual things said, not generic observations"],\n'
+    '  "skills_verified": ["skills the candidate explicitly confirmed they have"],\n'
+    '  "salary_expectation_lpa": <number or null>,\n'
+    '  "current_ctc_lpa": <number or null>,\n'
+    '  "notice_period_days": <number or null — convert: "1 month"=30, "2 months"=60, "immediate"=0>,\n'
+    '  "joining_timeline": "<candidate\'s own words or null>",\n'
+    '  "other_offers": <true/false/null — are they interviewing elsewhere?>,\n'
+    '  "intent_score": <integer 1-10 — 10=extremely excited, 1=clearly not interested>,\n'
+    '  "call_outcome": "<INTERESTED|BUSY|NOT_INTERESTED|CALLBACK_REQUESTED|CONFUSED>",\n'
+    '  "vibe_check": "<one specific, honest sentence about the candidate\'s energy and fit>",\n'
+    '  "hr_flags": ["specific red flags or concerns — be honest; empty array if none"],\n'
+    '  "recommended_next_step": "<specific action for the hiring team>"\n'
+    "}"
+)
+
+
+async def finalize_gemini_session(
+    consumer,
+    transcript: list[str],
+    *,
+    candidate_name: str,
+    candidate_phone: str = "",
+    job_description: str = "",
+    call_sid: str = "",
+    call_channel: str = "web",
+) -> None:
+    """End-of-call scorecard using Gemini transcript lines (AI:/USER: prefixes)."""
+    if not transcript:
+        return
+
+    from .gemini_recruiter import GEMINI_SUMMARY_MODEL, _gemini_api_key
+
+    api_key = _gemini_api_key()
+    if not api_key:
+        print("[Finalize] GEMINI_API_KEY missing — skipping recap")
+        return
+
+    transcript_body = "\n".join(transcript)
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"{_SUMMARY_JSON_INSTRUCTION}\n\nTranscript:\n{transcript_body}"
+        response = client.models.generate_content(
+            model=GEMINI_SUMMARY_MODEL,
+            contents=prompt,
+        )
+        raw = (response.text or "").strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*```$", "", raw)
+
+        analysis: dict = json.loads(raw)
+        score = analysis.get("intent_score")
+        outcome = analysis.get("call_outcome", "CONFUSED")
+        if outcome not in _VALID_OUTCOMES:
+            outcome = "CONFUSED"
+        analysis["call_outcome"] = outcome
+
+        summary_text = "\n".join(analysis.get("summary_bullets", []))
+        chat_transcript = [
+            {"role": "assistant" if line.startswith("AI:") else "user", "content": line.split(":", 1)[-1].strip()}
+            for line in transcript
+            if ":" in line
+        ]
+
+        from .models import CallSession
+        from django.utils import timezone
+
+        await CallSession.objects.acreate(
+            call_sid=call_sid,
+            candidate_name=candidate_name,
+            candidate_phone=candidate_phone,
+            job_description=job_description,
+            transcript=chat_transcript,
+            notes=analysis,
+            summary=summary_text,
+            intent_score=score,
+            call_outcome=outcome,
+            call_channel=call_channel,
+            ended_at=timezone.now(),
+        )
+        print(f"[Vox] Gemini session saved — Score:{score} Outcome:{outcome}")
+        await consumer.send_recap(score, json.dumps(analysis))
+    except json.JSONDecodeError as e:
+        print(f"[Finalize-JSON] {e}")
+        await consumer.send_recap("N/A", "Summary generation failed")
+    except Exception as e:
+        print(f"[Finalize-Error] {e}")
+        await consumer.send_recap("N/A", str(e))
+
+
 class VoiceAgent:
     def __init__(
         self,
@@ -105,7 +256,7 @@ class VoiceAgent:
         self.encoding                  = "linear16"
         self.notes: dict               = {}
         self.turn_count: int           = 0
-        self._last_user_speech         = time.time()
+        self._silence_anchor           = time.time()
         self._silence_task             = None
         self._active                   = False
         self._watchdog_fires: int      = 0
@@ -149,45 +300,7 @@ class VoiceAgent:
     # -----------------------------------------------------------------------
 
     def _build_system_prompt(self) -> str:
-        name = self.candidate_name
-        return f"""You are Priya, a senior HR recruiter. You are ON A LIVE PHONE CALL with {name} right now.
-
-ROLE: {self.job_description}
-
-SOUND HUMAN — never robotic:
-✗ "Can you walk me through your relevant technical experience?"
-✓ "So what are you actually working on these days? Like day-to-day?"
-✗ "What is your current cost to company and expected compensation?"
-✓ "And money-wise — where are you currently and what would work for you?"
-✗ "Certainly! Great question!"
-✓ "Oh right, yeah so basically..."
-
-YOUR VOICE: Use "basically", "actually", "you know", "like", "so", "right", "I mean".
-React with: "Oh nice!", "Achha okay", "Makes sense", "Right right", "Haan okay", "Mm."
-Hinglish: mirror the candidate — "Haan", "Bilkul", "Achha", "Toh basically..."
-NEVER: "Certainly!", "Of course!", "Great question!", "Absolutely!", "Definitely!"
-Use {name} once every 5-6 turns only.
-
-6-PHASE PLAYBOOK:
-1. OPENING (turns 1-2): Check if good time. If they already said "yes", "sure", "go ahead" or similar — skip asking again, move straight to role tease.
-2. EXPLORATION (turns 3-8): "What are you working on? What does a typical day look like?" Follow threads. Probe 2-3 JD skills naturally. Ask about scale, team, impact.
-3. MOTIVATION (turns 9-11): "What's making you explore right now?" "What matters most in your next role?"
-4. LOGISTICS (turns 12-14): Current CTC → expected CTC → notice period → other offers.
-5. CANDIDATE QUESTIONS (turns 15-16): "Any quick questions before I let you go?" Answer honestly.
-6. CLOSE (turns 17+): Ask "What time works best to have the team connect with you?" then "I'll share your profile, they'll reach out. Was great talking!"
-
-HANDLE: Busy → get callback time. Not interested → offer to send JD anyway. Short answers → "Tell me a bit more about that?" Hindi → shift to Hinglish. Competing offers → "We can expedite if that helps." Didn't understand / off-topic → "Sorry, I think I missed that — could you say that again?"
-
-RULES (non-negotiable):
-1. ONE question per turn. Never two.
-2. MAX 2-3 sentences per turn. Finish your question before anything else.
-3. save_candidate_info SILENTLY for: salary, CTC, notice period, skills, experience, availability.
-4. No markdown, bullets, asterisks — you are speaking aloud.
-5. Acknowledge what they said before asking next question.
-6. Never promise offer, salary range, timeline.
-7. CTC/salary: if candidate gives a per-month figure, multiply by 12 silently and save annual — never ask them to clarify the format.
-8. Never repeat the exact same question back-to-back. If they gave a short/unclear answer, rephrase or probe differently.
-"""
+        return build_vox_system_prompt(self.candidate_name, self.job_description)
 
     # -----------------------------------------------------------------------
     # Pipeline lifecycle
@@ -242,7 +355,7 @@ RULES (non-negotiable):
                             await self.handle_interrupt()
 
                     if transcript.strip() and is_final:
-                        self._last_user_speech = time.time()
+                        self._reset_silence_clock()
                         await self.consumer.send_transcript("user", transcript)
                         await self.trigger_llm_response(transcript)
 
@@ -264,7 +377,7 @@ RULES (non-negotiable):
         await self.consumer.send_transcript("vox", greeting)
         await self.send_to_tts(greeting)
         self.chat_history.append({"role": "assistant", "content": greeting})
-        self._last_user_speech = time.time()
+        self._reset_silence_clock()
         self._ai_finished_speaking_at = time.time()
 
     async def stop_pipeline(self) -> None:
@@ -284,9 +397,13 @@ RULES (non-negotiable):
     # Silence watchdog
     # -----------------------------------------------------------------------
 
+    def _reset_silence_clock(self) -> None:
+        self._silence_anchor = time.time()
+
     async def _silence_watchdog(self) -> None:
+        threshold = _SILENCE_GRACE_AFTER_AGENT_SEC + _SILENCE_PROMPT_AFTER_SEC
         while self._active:
-            await asyncio.sleep(2)
+            await asyncio.sleep(_SILENCE_CHECK_INTERVAL_SEC)
             if not self._active or self.is_ai_speaking or self.turn_count == 0:
                 continue
             # Silence = time since the LATER of (user last spoke) or (AI last finished).
@@ -451,6 +568,7 @@ RULES (non-negotiable):
         finally:
             self.is_ai_speaking = False
             self._ai_finished_speaking_at = time.time()
+            self._reset_silence_clock()
 
     async def _handle_tool_calls(self, tool_accumulator: dict, assistant_content: str) -> None:
         tc_list = [
@@ -497,6 +615,7 @@ RULES (non-negotiable):
             await self._stream_followup()
 
     async def _stream_followup(self) -> None:
+        self.is_ai_speaking = True
         try:
             messages = list(self.chat_history)
             messages.append({"role": "system", "content": self._build_context_note()})
@@ -528,6 +647,9 @@ RULES (non-negotiable):
                 await self.consumer.send_transcript("vox", text)
         except Exception as e:
             print(f"[Followup-Error] {e}")
+        finally:
+            self.is_ai_speaking = False
+            self._reset_silence_clock()
 
     async def _call_tool(self, name: str, args: dict) -> dict:
         if name == "save_candidate_info":
@@ -719,27 +841,7 @@ RULES (non-negotiable):
         if len(self.chat_history) <= 2:
             return
         try:
-            summary_prompt = (
-                "Based on this screening call, produce ONLY a valid JSON object — "
-                "no markdown, no code fences, no extra text. "
-                "Be specific and honest. Base every field strictly on what was actually said. "
-                "Use null for anything not discussed — do NOT infer or fabricate.\n\n"
-                "{\n"
-                '  "summary_bullets": ["3-5 specific bullets — quote actual things said, not generic observations"],\n'
-                '  "skills_verified": ["skills the candidate explicitly confirmed they have"],\n'
-                '  "salary_expectation_lpa": <number or null>,\n'
-                '  "current_ctc_lpa": <number or null>,\n'
-                '  "notice_period_days": <number or null — convert: "1 month"=30, "2 months"=60, "immediate"=0>,\n'
-                '  "joining_timeline": "<candidate\'s own words or null>",\n'
-                '  "other_offers": <true/false/null — are they interviewing elsewhere?>,\n'
-                '  "intent_score": <integer 1-10 — 10=extremely excited, 1=clearly not interested>,\n'
-                '  "call_outcome": "<INTERESTED|BUSY|NOT_INTERESTED|CALLBACK_REQUESTED|CONFUSED>",\n'
-                '  "vibe_check": "<one specific, honest sentence about the candidate\'s energy and fit>",\n'
-                '  "hr_flags": ["specific red flags or concerns — be honest; empty array if none"],\n'
-                '  "recommended_next_step": "<specific action for the hiring team>"\n'
-                "}"
-            )
-            messages = self.chat_history + [{"role": "user", "content": summary_prompt}]
+            messages = self.chat_history + [{"role": "user", "content": _SUMMARY_JSON_INSTRUCTION}]
             resp = await self._groq_create(
                 messages=messages,
                 model="llama-3.3-70b-versatile",

@@ -1,16 +1,28 @@
+import asyncio
 import json
-import base64
 from urllib.parse import unquote
+
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.cache import cache
-from .agent import VoiceAgent
+
+from .gemini_recruiter import (
+    GeminiLiveBridge,
+    RECRUITER_PROMPT,
+    SARAH_GREETING_KICKOFF,
+    build_sarah_system_prompt,
+)
 
 
 class TwilioConsumer(AsyncWebsocketConsumer):
+    """
+    Twilio Media Stream WebSocket — Gemini Live (Sarah recruiter).
+    Matches FastAPI /media-stream handler behavior.
+    """
+
     async def connect(self):
         try:
             await self.accept()
-            print("[Twilio] Call stream connected.")
+            print("[Twilio] Socket connected successfully.")
 
             params = self._parse_query()
             session = {}
@@ -18,21 +30,34 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             if token:
                 session = cache.get(f"vox:{token}") or {}
                 if not session:
-                    print(f"[Twilio] No session found for token={token}")
+                    print(f"[Twilio] No session for token={token}")
 
-            self.stream_sid = None
-            self.agent = VoiceAgent(
-                self,
-                job_description=session.get("jd") or params.get("jd"),
-                candidate_name=session.get("name") or params.get("name"),
-                candidate_phone=session.get("phone") or params.get("phone"),
+            name = session.get("name") or params.get("name")
+            jd = session.get("jd") or params.get("jd")
+            phone = session.get("phone") or params.get("phone") or ""
+
+            # FastAPI uses RECRUITER_PROMPT directly; optional JD/name from session
+            system_prompt = (
+                build_sarah_system_prompt(jd, name)
+                if (jd or name)
+                else RECRUITER_PROMPT.strip()
+            )
+
+            self.bridge = GeminiLiveBridge(
+                mode="twilio",
+                system_prompt=system_prompt,
+                greeting_kickoff=SARAH_GREETING_KICKOFF,
+                on_send_twilio_json=self._send_twilio_json,
+                candidate_name=name or "Candidate",
+                candidate_phone=phone,
+                job_description=jd or "",
                 call_channel="twilio",
             )
-            await self.agent.start_pipeline(encoding="mulaw")
-            print("[Twilio] Pipeline started, waiting for stream start event.")
+            self._bridge_task = asyncio.create_task(self.bridge.run())
+            print("[Twilio] Gemini Live bridge started.")
 
         except Exception as e:
-            print(f"[Twilio-CRITICAL] Connection failed: {e}")
+            print(f"[Twilio] Connection failed: {e}")
             await self.close()
 
     def _parse_query(self) -> dict:
@@ -45,54 +70,23 @@ class TwilioConsumer(AsyncWebsocketConsumer):
         return result
 
     async def disconnect(self, close_code):
-        print(f"[Twilio] Call ended (code={close_code})")
-        if hasattr(self, "agent"):
-            await self.agent.stop_pipeline()
+        print(f"[Twilio] Disconnected (code={close_code})")
+        if hasattr(self, "bridge"):
+            self.bridge.close()
+        if hasattr(self, "_bridge_task"):
+            self._bridge_task.cancel()
+            try:
+                await self._bridge_task
+            except Exception:
+                pass
 
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
-        except Exception:
+        except json.JSONDecodeError:
             return
-        event = data.get("event")
+        if hasattr(self, "bridge"):
+            self.bridge.enqueue_twilio_event(data)
 
-        if event == "start":
-            start = data.get("start", {})
-            self.stream_sid = start.get("streamSid", "")
-            self.agent.call_sid = start.get("callSid", "")
-            print(f"[Twilio] Stream started: {self.stream_sid} | Call: {self.agent.call_sid}")
-            await self.agent.initial_greeting()
-
-        elif event == "media":
-            try:
-                payload = data.get("media", {}).get("payload", "")
-                if payload:
-                    chunk = base64.b64decode(payload)
-                    await self.agent.process_audio_chunk(chunk)
-            except Exception as e:
-                print(f"[Twilio] Bad media chunk: {e}")
-
-        elif event == "stop":
-            print("[Twilio] Stream stopped.")
-            await self.close()
-
-    async def send_audio(self, chunk: bytes):
-        if self.stream_sid:
-            await self.send(text_data=json.dumps({
-                "event": "media",
-                "streamSid": self.stream_sid,
-                "media": {"payload": base64.b64encode(chunk).decode("utf-8")},
-            }))
-
-    async def send_transcript(self, role: str, text: str):
-        print(f"[Twilio-Live] {role}: {text}")
-
-    async def send_interrupt(self):
-        if self.stream_sid:
-            await self.send(text_data=json.dumps({
-                "event": "clear",
-                "streamSid": self.stream_sid,
-            }))
-
-    async def send_recap(self, score, reason):
-        print(f"[Twilio-Final] Score={score} | {reason[:200]}")
+    async def _send_twilio_json(self, payload: dict) -> None:
+        await self.send(text_data=json.dumps(payload))

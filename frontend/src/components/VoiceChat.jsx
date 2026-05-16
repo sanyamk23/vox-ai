@@ -145,11 +145,13 @@ export default function VoiceChat() {
     const url = `${WS_BASE}/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
-    ws.onopen    = async () => { setStatus('connected'); await startMic(); };
+    ws.onopen    = () => { /* wait for Gemini ready before mic */ };
     ws.onmessage = async (e) => {
       if (typeof e.data === 'string') {
         const d = jsonTry(e.data);
-        if      (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
+        if      (d.type === 'ready')      { setStatus('connected'); await startMic(); }
+        else if (d.type === 'error')     { alert(d.message || 'Session failed to start'); cleanup(); setStatus('idle'); }
+        else if (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
         else if (d.type === 'interrupt')  { audioQ.current = []; setAiSpeaks(false); }
         else if (d.type === 'recap')      { setRecap(d.data); cleanup(); setStatus('ended'); }
       } else {
@@ -314,9 +316,8 @@ export default function VoiceChat() {
             <Label icon={<Sparkles size={12} />}>AI Stack</Label>
             <div className="mt-3 space-y-2">
               {[
-                { label: 'STT', value: 'Deepgram nova-2 · Hinglish' },
-                { label: 'LLM', value: 'Groq · llama-3.3-70b' },
-                { label: 'TTS', value: 'Sarvam → ElevenLabs → DG' },
+                { label: 'Brain', value: 'Gemini Live' },
+                { label: 'Persona', value: 'Priya · HR screening' },
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between">
                   <span className="text-[11px] font-medium text-slate-400">{label}</span>

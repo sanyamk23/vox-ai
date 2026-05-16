@@ -13,4 +13,5 @@ dj-database-url
 python-dotenv
 twilio==9.10.0
 django-cors-headers
-signalwire
+google-genai>=1.0
+audioop-lts>=0.2.1; python_version >= "3.13"

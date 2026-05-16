@@ -6,37 +6,132 @@ import uuid
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from twilio.rest import Client
 
-# ------------------------------------------------------------------
-# Security constants
-# ------------------------------------------------------------------
-
-# E.164: + followed by 7-15 digits
 _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
-
-# Strip control characters and characters that could cause injection
 _SANITIZE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-_MAX_JD_LENGTH = 4000       # ~3x a typical JD; prevents prompt-stuffing
+_MAX_JD_LENGTH = 4000
 _MAX_NAME_LENGTH = 100
 
 
 def _validate_e164(number: str) -> bool:
-    """Strict E.164 phone validation. Prevents malformed numbers reaching Twilio."""
     return bool(_E164_RE.match(number.strip()))
 
 
 def _sanitize(text: str, max_length: int = 4000) -> str:
-    """Remove control characters and hard-limit length."""
     return _SANITIZE_RE.sub("", text).strip()[:max_length]
 
 
-# ------------------------------------------------------------------
-# View
-# ------------------------------------------------------------------
+def _clean_host(host_url: str) -> str:
+    """Strip scheme for TwiML — matches FastAPI make_call()."""
+    return (
+        host_url.strip()
+        .replace("https://", "")
+        .replace("http://", "")
+        .replace("wss://", "")
+        .replace("ws://", "")
+        .rstrip("/")
+    )
+
+
+def _media_stream_path(use_legacy_ws_prefix: bool = False) -> str:
+    """WebSocket path segment — FastAPI uses /media-stream."""
+    return "ws/media-stream" if use_legacy_ws_prefix else "media-stream"
+
+
+def _build_twiml(stream_url: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        "    <Connect>\n"
+        f'        <Stream url="{stream_url}" />\n'
+        "    </Connect>\n"
+        "</Response>"
+    )
+
+
+def _place_call(
+    *,
+    to_number: str,
+    from_number: str,
+    host_url: str,
+    jd: str = "Software Engineer role",
+    name: str = "Candidate",
+    use_legacy_ws_prefix: bool = False,
+) -> dict:
+    clean_host = _clean_host(host_url)
+    token = str(uuid.uuid4())
+    cache.set(f"vox:{token}", {"jd": jd, "name": name, "phone": to_number}, timeout=3600)
+    stream_path = _media_stream_path(use_legacy_ws_prefix)
+    stream_url = f"wss://{clean_host}/{stream_path}?token={token}"
+    twiml = _build_twiml(stream_url)
+
+    print(f"Generated TwiML Schema:\n{twiml}")
+
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    if not (account_sid and auth_token):
+        raise RuntimeError("Twilio credentials not configured")
+
+    client = Client(account_sid, auth_token)
+    call = client.calls.create(twiml=twiml, to=to_number, from_=from_number)
+    return {"status": "Call initiated", "call_sid": call.sid, "stream_url": stream_url}
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def outgoing_call(request):
+    """
+    FastAPI-compatible outbound call.
+    POST /outgoing-call?to_number=...&from_number=...&host_url=...
+    Body JSON also supported.
+    """
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        body = {}
+
+    to_number = (
+        request.GET.get("to_number")
+        or body.get("to_number")
+        or body.get("phone")
+        or ""
+    ).strip()
+    from_number = (
+        request.GET.get("from_number")
+        or body.get("from_number")
+        or os.getenv("TWILIO_PHONE_NUMBER", "")
+    ).strip()
+    host_url = (request.GET.get("host_url") or body.get("host_url") or os.getenv("PUBLIC_URL", "")).strip()
+
+    if not to_number:
+        return JsonResponse({"status": "error", "message": "to_number is required"}, status=400)
+    if not _validate_e164(to_number):
+        return JsonResponse(
+            {"status": "error", "message": "to_number must be E.164 (e.g. +919876543210)"},
+            status=400,
+        )
+    if not from_number:
+        return JsonResponse({"status": "error", "message": "from_number is required"}, status=400)
+    if not host_url or "ngrok_url_here" in host_url:
+        return JsonResponse({"status": "error", "message": "host_url / PUBLIC_URL not configured"}, status=400)
+
+    try:
+        result = _place_call(
+            to_number=to_number,
+            from_number=from_number,
+            host_url=host_url,
+        )
+        return JsonResponse(result)
+    except Exception as e:
+        print(f"[Call-Error] {e}")
+        return JsonResponse({"status": "error", "message": "Failed to initiate call"}, status=500)
+
 
 @csrf_exempt
 def initiate_call(request):
+    """UI outbound call — POST /api/call/ with {phone, jd, name}."""
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "Only POST allowed"}, status=405)
 
@@ -46,14 +141,12 @@ def initiate_call(request):
         return JsonResponse({"status": "error", "message": "Invalid JSON body"}, status=400)
 
     try:
-        to_number = (data.get("phone") or "").strip()
+        to_number = (data.get("phone") or data.get("to_number") or "").strip()
         raw_jd = data.get("jd") or "Software Engineer role"
         raw_name = data.get("name") or "Candidate"
 
-        # --- Security: validate inputs before any external call ---
         if not to_number:
             return JsonResponse({"status": "error", "message": "phone is required"}, status=400)
-
         if not _validate_e164(to_number):
             return JsonResponse(
                 {"status": "error", "message": "phone must be in E.164 format (e.g. +919876543210)"},
@@ -62,64 +155,39 @@ def initiate_call(request):
 
         jd = _sanitize(raw_jd, _MAX_JD_LENGTH)
         name = _sanitize(raw_name, _MAX_NAME_LENGTH)
-
         if not jd:
             return JsonResponse({"status": "error", "message": "jd cannot be empty"}, status=400)
 
-        # --- Build WebSocket URL ---
-        public_url = os.getenv("PUBLIC_URL", "").strip()
+        public_url = (data.get("host_url") or os.getenv("PUBLIC_URL", "")).strip()
         if not public_url or "ngrok_url_here" in public_url:
             return JsonResponse(
                 {"status": "error", "message": "PUBLIC_URL not configured in .env"},
                 status=400,
             )
 
-        stream_url = (
-            public_url
-            .replace("https://", "wss://")
-            .replace("http://", "ws://")
-            .rstrip("/")
+        from_number = (
+            (data.get("from_number") or "").strip()
+            or os.getenv("TWILIO_PHONE_NUMBER", "").strip()
         )
-        if not stream_url.startswith("ws"):
-            stream_url = f"wss://{stream_url}"
+        if not from_number:
+            return JsonResponse(
+                {"status": "error", "message": "TWILIO_PHONE_NUMBER not configured"},
+                status=500,
+            )
 
-        # Store session data in Redis cache to keep the WebSocket URL short.
-        # Twilio rejects URLs that are too long when JD is embedded directly.
-        token = str(uuid.uuid4())
-        cache.set(f"vox:{token}", {"jd": jd, "name": name, "phone": to_number}, timeout=3600)
-        ws_url = f"{stream_url}/ws/twilio/?token={token}"
-        twiml = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            f'<Response><Connect><Stream url="{ws_url}" /></Connect></Response>'
+        print(f"[Call] Twilio → Gemini Live (Sarah) | To: {to_number} | Candidate: {name}")
+        result = _place_call(
+            to_number=to_number,
+            from_number=from_number,
+            host_url=public_url,
+            jd=jd,
+            name=name,
         )
-
-        # --- Provider selection: SignalWire (if configured) else Twilio ---
-        sw_project = os.getenv("SIGNALWIRE_PROJECT_ID", "").strip()
-        sw_token = os.getenv("SIGNALWIRE_TOKEN", "").strip()
-        sw_space = os.getenv("SIGNALWIRE_SPACE", "").strip()
-
-        if sw_project and sw_token and sw_space:
-            from signalwire.rest import Client as SWClient
-            client = SWClient(sw_project, sw_token, signalwire_space_url=sw_space)
-            from_number = os.getenv("SIGNALWIRE_PHONE_NUMBER", "").strip()
-            print(f"[Call] Provider: SignalWire | To: {to_number} | Candidate: {name}")
-        else:
-            from twilio.rest import Client
-            account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-            auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-            from_number = os.getenv("TWILIO_PHONE_NUMBER", "").strip()
-            if not (account_sid and auth_token and from_number):
-                return JsonResponse(
-                    {"status": "error", "message": "Twilio credentials not configured"},
-                    status=500,
-                )
-            client = Client(account_sid, auth_token)
-            print(f"[Call] Provider: Twilio | To: {to_number} | Candidate: {name}")
-
-        call = client.calls.create(twiml=twiml, to=to_number, from_=from_number)
-        return JsonResponse({"status": "success", "call_sid": call.sid})
+        return JsonResponse({"status": "success", "call_sid": result["call_sid"]})
 
     except Exception as e:
-        # Never expose internal stack traces to the client
         print(f"[Call-Error] {e}")
         return JsonResponse({"status": "error", "message": "Failed to initiate call"}, status=500)
+
+
+initiate_outgoing_call = outgoing_call
