@@ -102,6 +102,7 @@ def _gemini_api_key() -> str:
 GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 GEMINI_SUMMARY_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.5-flash")
 GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Aoede")
+GEMINI_VOICE_LANGUAGE = os.getenv("GEMINI_VOICE_LANGUAGE", "en-IN")  # Indian English accent
 
 SARAH_GREETING_KICKOFF = (
     "Please call the candidate now, do the greeting, and check their available time."
@@ -350,10 +351,13 @@ class GeminiLiveBridge:
                 parts=[types.Part.from_text(text=self._system_prompt)]
             ),
             temperature=0.7,
+            # Adapt prosody and emotional tone for a more natural, human-sounding voice
+            enable_affective_dialog=True,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=GEMINI_VOICE)
-                )
+                ),
+                language_code=GEMINI_VOICE_LANGUAGE,
             ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -374,6 +378,9 @@ class GeminiLiveBridge:
 
         inbound_resample_state = None
         outbound_resample_state = None
+        # Buffer outbound mulaw before sending to Twilio — consistent 20ms chunks
+        # prevent choppy audio caused by irregular Gemini audio packet sizes
+        outbound_mulaw_buffer = b""
 
         async with ai_client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=config) as gemini_session:
             print(f"[Gemini] Live session established ({self._mode}).")
@@ -443,8 +450,8 @@ class GeminiLiveBridge:
                                     pcm_8k, 2, 1, 8000, 16000, inbound_resample_state
                                 )
                                 inbound_frame_count += 1
-                                if inbound_frame_count % 20 == 0: # Every 2 seconds
-                                    print("[Twilio->Gemini] Sending buffered 100ms audio block.")
+                                if inbound_frame_count % 50 == 0: # Every 2 seconds
+                                    print("[Twilio->Gemini] Sending 40ms audio blocks.")
 
                                 await gemini_session.send_realtime_input(
                                     audio=types.Blob(data=pcm_16k, mime_type="audio/pcm;rate=16000")
@@ -455,7 +462,7 @@ class GeminiLiveBridge:
                             break
 
             async def gemini_to_client() -> None:
-                nonlocal outbound_resample_state
+                nonlocal outbound_resample_state, outbound_mulaw_buffer
                 try:
                     while not self._closed.is_set():
                         async for response in gemini_session.receive():
@@ -479,14 +486,20 @@ class GeminiLiveBridge:
                                         TWILIO_OUTPUT_RATE,
                                         outbound_resample_state,
                                     )
-                                    mulaw = audioop.lin2ulaw(pcm_8k, 2)
-                                    await self._send_twilio_json({
-                                        "event": "media",
-                                        "streamSid": self.stream_sid,
-                                        "media": {
-                                            "payload": base64.b64encode(mulaw).decode("utf-8")
-                                        },
-                                    })
+                                    outbound_mulaw_buffer += audioop.lin2ulaw(pcm_8k, 2)
+                                    # Send in exactly 20ms (160-byte) chunks — Twilio's
+                                    # expected packet size; prevents choppy/robotic audio
+                                    while len(outbound_mulaw_buffer) >= 160:
+                                        await self._send_twilio_json({
+                                            "event": "media",
+                                            "streamSid": self.stream_sid,
+                                            "media": {
+                                                "payload": base64.b64encode(
+                                                    outbound_mulaw_buffer[:160]
+                                                ).decode("utf-8")
+                                            },
+                                        })
+                                        outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
 
                             if response.server_content:
                                 sc = response.server_content
@@ -536,14 +549,45 @@ class GeminiLiveBridge:
                                         if self._on_transcript:
                                             await self._on_transcript("user", it.text)
 
-                                if sc.turn_complete and agg:
-                                    await agg.on_turn_complete()
+                                if sc.turn_complete:
+                                    # Flush any remaining bytes so the tail of each
+                                    # AI response is never silently swallowed
+                                    if (
+                                        outbound_mulaw_buffer
+                                        and self._mode == "twilio"
+                                        and self.stream_sid
+                                        and self._send_twilio_json
+                                    ):
+                                        await self._send_twilio_json({
+                                            "event": "media",
+                                            "streamSid": self.stream_sid,
+                                            "media": {
+                                                "payload": base64.b64encode(
+                                                    outbound_mulaw_buffer
+                                                ).decode("utf-8")
+                                            },
+                                        })
+                                        outbound_mulaw_buffer = b""
+                                    if agg:
+                                        await agg.on_turn_complete()
 
                                 if sc.interrupted:
                                     print(
                                         "[System Notice] Model output was naturally "
                                         "interrupted by candidate speech."
                                     )
+                                    # Drop buffered audio and clear Twilio's playout queue
+                                    # so the bot's voice cuts off the instant the candidate speaks
+                                    outbound_mulaw_buffer = b""
+                                    if (
+                                        self._mode == "twilio"
+                                        and self.stream_sid
+                                        and self._send_twilio_json
+                                    ):
+                                        await self._send_twilio_json({
+                                            "event": "clear",
+                                            "streamSid": self.stream_sid,
+                                        })
                                     if agg:
                                         await agg.on_interrupted()
                                     if self._on_interrupt:
