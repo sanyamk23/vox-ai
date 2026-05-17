@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import urllib.parse
 import uuid
 
 from django.core.cache import cache
@@ -156,7 +157,14 @@ def _place_call(
 
     cache.set(f"vox:{token}", session_data, timeout=3600)
     stream_path = _media_stream_path(use_legacy_ws_prefix)
-    stream_url = f"wss://{clean_host}/{stream_path}?token={token}"
+    # Embed name + phone in the URL so the consumer always has them as a
+    # fallback even if the Redis cache misses on WebSocket connect
+    stream_url = (
+        f"wss://{clean_host}/{stream_path}"
+        f"?token={token}"
+        f"&name={urllib.parse.quote(name, safe='')}"
+        f"&phone={urllib.parse.quote(to_number, safe='')}"
+    )
     twiml = _build_twiml(stream_url)
 
     print(f"Generated TwiML Schema:\n{twiml}")
