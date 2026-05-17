@@ -1,14 +1,17 @@
 import io
 import json
+import logging
 import os
 import re
 import uuid
 
 from django.core.cache import cache
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from twilio.rest import Client
+
+logger = logging.getLogger(__name__)
 
 _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 _SANITIZE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -185,7 +188,28 @@ def _place_call(
         raise RuntimeError("Twilio credentials not configured")
 
     client = Client(account_sid, auth_token)
-    call = client.calls.create(twiml=twiml, to=to_number, from_=from_number)
+    status_callback_url = f"https://{clean_host}/api/call-status/"
+    call = client.calls.create(
+        twiml=twiml,
+        to=to_number,
+        from_=from_number,
+        status_callback=status_callback_url,
+        status_callback_method="POST",
+    )
+
+    # Store call SID → context so the status webhook can schedule retries on no-answer
+    cache.set(f"vox:call:{call.sid}", {
+        "phone":            to_number,
+        "name":             name,
+        "jd":               jd,
+        "resume_text":      resume_text,
+        "retry_num":        retry_num,
+        "host_url":         host_url,
+        "from_number":      from_number,
+        "prior_transcript": prior_transcript or [],
+        "prior_notes":      prior_notes or {},
+    }, timeout=3600)
+
     return {"status": "Call initiated", "call_sid": call.sid, "stream_url": stream_url}
 
 
@@ -344,6 +368,81 @@ def initiate_call(request):
 
 
 initiate_outgoing_call = outgoing_call
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def call_status_webhook(request):
+    """
+    Twilio status callback — POST /api/call-status/
+    Fires when an outbound call finishes.  If the candidate missed the call
+    (no-answer / busy / failed), schedules a retry via CallRetryManager.
+    """
+    from .retry_manager import CallRetryManager, RETRY_1_DELAY, RETRY_2_DELAY
+
+    call_sid    = request.POST.get("CallSid", "")
+    call_status = request.POST.get("CallStatus", "")
+
+    logger.info("[CallStatus] sid=%s status=%s", call_sid, call_status)
+
+    # Only act on missed / unreachable calls — ignore completed / in-progress
+    if call_status not in ("no-answer", "busy", "failed"):
+        return HttpResponse(status=204)
+
+    session = cache.get(f"vox:call:{call_sid}")
+    if not session:
+        logger.warning("[CallStatus] No session data for CallSid=%s — cannot retry", call_sid)
+        return HttpResponse(status=204)
+
+    phone       = session.get("phone", "")
+    name        = session.get("name", "Candidate")
+    jd          = session.get("jd", "")
+    resume_text = session.get("resume_text", "")
+    retry_num   = session.get("retry_num", 0)
+    host_url    = session.get("host_url", "") or os.getenv("PUBLIC_URL", "")
+    from_number = session.get("from_number", "") or os.getenv("TWILIO_PHONE_NUMBER", "")
+    prior_transcript = session.get("prior_transcript", [])
+    prior_notes      = session.get("prior_notes", {})
+
+    if not phone or not host_url or not from_number:
+        logger.warning("[CallStatus] Missing context for retry — phone=%s", phone)
+        return HttpResponse(status=204)
+
+    if retry_num >= CallRetryManager.MAX_RETRIES:
+        logger.info("[CallStatus] Max retries reached for %s — no further callbacks", phone)
+        CallRetryManager.clear(phone)
+        return HttpResponse(status=204)
+
+    new_retry_num = CallRetryManager.record_drop(
+        phone=phone,
+        name=name,
+        jd=jd,
+        transcript=prior_transcript,
+        notes=prior_notes,
+        resume_text=resume_text,
+    )
+
+    delay = RETRY_1_DELAY if new_retry_num == 1 else RETRY_2_DELAY
+    logger.info(
+        "[CallStatus] %s for %s — scheduling retry #%d in %.0fs",
+        call_status, phone, new_retry_num, delay,
+    )
+
+    state = CallRetryManager.load(phone)
+    CallRetryManager.schedule_callback(
+        phone=phone,
+        name=name,
+        jd=jd,
+        transcript=state.get("transcript", prior_transcript),
+        notes=state.get("notes", prior_notes),
+        resume_text=state.get("resume_text", resume_text),
+        retry_num=new_retry_num,
+        delay_seconds=delay,
+        host_url=host_url,
+        from_number=from_number,
+    )
+
+    return HttpResponse(status=204)
 
 
 @csrf_exempt

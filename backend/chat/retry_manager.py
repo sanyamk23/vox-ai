@@ -2,7 +2,7 @@
 CallRetryManager — up to 3 total call attempts per candidate session.
 
   Attempt 1 (retry_num=0): original call
-  Attempt 2 (retry_num=1): immediate callback (~10s after drop)
+  Attempt 2 (retry_num=1): immediate callback (~5s after drop)
   Attempt 3 (retry_num=2): final attempt after 5 minutes
 
 Retry state is stored in Redis under key  vox:retry:{phone}
@@ -40,7 +40,7 @@ _RETRY_KEY_PREFIX = "vox:retry:"
 _RETRY_TTL_SECONDS = 45 * 60          # 45 min covers both retry windows
 _MAX_PRIOR_LINES   = 30               # max transcript lines stored between retries
 
-RETRY_1_DELAY  =  10.0   # seconds — brief pause before immediate callback
+RETRY_1_DELAY  =   5.0   # seconds — brief pause before immediate callback
 RETRY_2_DELAY  = 300.0   # seconds — 5 minutes
 
 # Strong refs to scheduled retry tasks so the event loop doesn't GC them

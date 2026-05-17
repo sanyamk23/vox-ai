@@ -9,7 +9,7 @@ services:
       - POSTGRES_USER=vox_user
       - POSTGRES_PASSWORD=vox_pass
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vox_user -d vox_db"]
+      test: [ "CMD-SHELL", "pg_isready -U vox_user -d vox_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -20,7 +20,7 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -30,6 +30,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     environment:
       - DATABASE_URL=postgres://vox_user:vox_pass@db:5432/vox_db
       - REDIS_URL=redis://redis:6379/0
@@ -49,7 +51,7 @@ services:
       - PUBLIC_URL=${PUBLIC_URL}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-django-insecure-dev-only-do-not-use-in-production}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/"]
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8000/health/" ]
       interval: 30s
       timeout: 5s
       retries: 3

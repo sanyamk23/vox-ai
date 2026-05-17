@@ -150,9 +150,18 @@ class TwilioConsumer(AsyncWebsocketConsumer):
         )
 
         if not was_dropped:
-            # Natural close — clear any retry state and we're done
-            CallRetryManager.clear(self._phone)
-            return
+            # Short natural close = wrong person picked up, candidate unavailable
+            # A real screening ends in 60s+ even for a quick "not interested"
+            if duration_seconds < 30:
+                was_dropped = True
+                print(
+                    f"[Retry] Short natural close ({duration_seconds:.0f}s) — "
+                    "likely wrong person/unavailable, treating as retriable"
+                )
+            else:
+                # Natural close after real screening — clear retry state and done
+                CallRetryManager.clear(self._phone)
+                return
 
         if not self._phone:
             print("[Retry] No phone number on session — cannot retry")
@@ -181,7 +190,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             return
 
         delay = RETRY_1_DELAY if retry_num == 1 else RETRY_2_DELAY
-        delay_label = "immediately (~10s)" if retry_num == 1 else "in 5 minutes"
+        delay_label = "immediately (~5s)" if retry_num == 1 else "in 5 minutes"
         print(f"[Retry] Scheduling callback #{retry_num} to {self._phone} {delay_label}")
 
         state = CallRetryManager.load(self._phone)
