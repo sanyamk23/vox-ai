@@ -1,11 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Phone, Mic, Square, Activity, Briefcase, User,
+  Phone, Activity, Briefcase, User,
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
+  Copy, TrendingUp, Heart, Package, Code2,
+  MapPin, DollarSign, Calendar, Users, Building2,
+  SlidersHorizontal, FileText, Upload, Mic, Square, BarChart3,
 } from 'lucide-react';
+import CallConsole from './CallConsole';
 
-// ── Outcome config (light-theme safe colours) ─────────────────────────────────
+// ── Outcome config ─────────────────────────────────────────────────────────────
 const OUTCOME = {
   INTERESTED:         { label: 'Interested',         cls: 'text-emerald-700 bg-emerald-50 border-emerald-200', Icon: CheckCircle },
   CALLBACK_REQUESTED: { label: 'Callback Requested', cls: 'text-indigo-700  bg-indigo-50  border-indigo-200',  Icon: Phone },
@@ -16,6 +22,62 @@ const OUTCOME = {
 const scoreColor = (s) => s >= 8 ? '#059669' : s >= 5 ? '#d97706' : '#dc2626';
 const scoreBg    = (s) => s >= 8 ? 'rgba(16,185,129,0.08)' : s >= 5 ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
 const scoreBd    = (s) => s >= 8 ? 'rgba(16,185,129,0.22)' : s >= 5 ? 'rgba(245,158,11,0.22)' : 'rgba(239,68,68,0.22)';
+const confLabel  = (c) => c == null ? null : c >= 0.7 ? 'High' : c >= 0.4 ? 'Medium' : 'Low';
+const confColor  = (c) => c == null ? '#94a3b8' : c >= 0.7 ? '#059669' : c >= 0.4 ? '#d97706' : '#dc2626';
+
+const DIMS = [
+  { key: 'technical_fit',  label: 'Technical',    Icon: Code2,         color: '#6366f1', bg: 'rgba(99,102,241,0.07)',  bd: 'rgba(99,102,241,0.18)' },
+  { key: 'communication',  label: 'Communication', Icon: MessageSquare, color: '#8b5cf6', bg: 'rgba(139,92,246,0.07)', bd: 'rgba(139,92,246,0.18)' },
+  { key: 'motivation_fit', label: 'Motivation',   Icon: Heart,         color: '#059669', bg: 'rgba(5,150,105,0.07)',  bd: 'rgba(5,150,105,0.18)' },
+  { key: 'logistics_fit',  label: 'Logistics',    Icon: Package,       color: '#d97706', bg: 'rgba(217,119,6,0.07)',  bd: 'rgba(217,119,6,0.18)' },
+];
+
+function buildExportText(report, name) {
+  const cf = report.overall_confidence;
+  const lines = [
+    '═══════════════════════════════════════',
+    '           VOX SCREENING REPORT        ',
+    '═══════════════════════════════════════',
+    `Candidate  : ${name || 'Unknown'}`,
+    `Score      : ${report.score ?? '—'}/10`,
+    `Outcome    : ${OUTCOME[report.call_outcome]?.label ?? report.call_outcome ?? '—'}`,
+    cf != null ? `Confidence : ${confLabel(cf)} (${Math.round(cf * 100)}%)` : '',
+    '',
+    report.vibe_check ? `"${report.vibe_check}"` : '',
+    '',
+    '─── Summary ────────────────────────────',
+    ...(report.summary_bullets || []).map(b => `  • ${b}`),
+    '',
+    '─── Skills Verified ────────────────────',
+    `  ${(report.skills_verified || []).join(', ') || 'None mentioned'}`,
+    '',
+    '─── Key Metrics ────────────────────────',
+    report.salary_expectation_lpa != null ? `  Expected CTC : ${report.salary_expectation_lpa} LPA` : '',
+    report.current_ctc_lpa != null        ? `  Current CTC  : ${report.current_ctc_lpa} LPA`        : '',
+    report.notice_period_days != null     ? `  Notice Period: ${report.notice_period_days} days`     : '',
+    report.joining_timeline               ? `  Joining      : ${report.joining_timeline}`            : '',
+    report.other_offers != null           ? `  Other Offers : ${report.other_offers ? 'Yes' : 'No'}` : '',
+    '',
+    '─── Dimension Scores ───────────────────',
+    ...DIMS.map(d => {
+      const dim = report[d.key];
+      return dim ? `  ${d.label.padEnd(14)}: ${dim.score}/10 (confidence ${Math.round((dim.confidence ?? 0) * 100)}%)` : '';
+    }).filter(Boolean),
+    '',
+    ...(report.hr_flags?.length ? [
+      '─── HR Flags ───────────────────────────',
+      ...(report.hr_flags || []).map(f => `  ⚠  ${f}`),
+      '',
+    ] : []),
+    ...(report.recommended_next_step ? [
+      '─── Recommended Action ─────────────────',
+      `  ${report.recommended_next_step}`,
+      '',
+    ] : []),
+    '═══════════════════════════════════════',
+  ].filter(l => l != null);
+  return lines.join('\n');
+}
 
 // ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
@@ -26,38 +88,53 @@ const jsonTry = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmt     = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
 
-function floatTo16BitPCM(input) {
-  const buf  = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buf);
-  for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-  return buf;
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function VoiceChat() {
-  const [status,   setStatus]   = useState('idle');
-  const [messages, setMessages] = useState([]);
-  const [recap,    setRecap]    = useState(null);
-  const [jd,       setJd]       = useState('We are looking for a Senior Software Engineer proficient in React and Django.');
-  const [phone,    setPhone]    = useState('+91');
-  const [name,     setName]     = useState('');
-  const [bars,     setBars]     = useState(Array(40).fill(0));
-  const [aiSpeaks, setAiSpeaks] = useState(false);
-  const [elapsed,  setElapsed]  = useState(0);
+const WORK_LOCATION_OPTIONS = ['Hybrid', 'Onsite', 'WFH'];
 
-  const wsRef       = useRef(null);
-  const audioCtxRef = useRef(null);
-  const procRef     = useRef(null);
-  const streamRef   = useRef(null);
-  const analyserRef = useRef(null);
-  const rafRef      = useRef(null);
-  const audioQ      = useRef([]);
-  const playing     = useRef(false);
-  const endRef      = useRef(null);
-  const timerRef    = useRef(null);
+const EMPTY_STRUCTURED = {
+  job_title: '',
+  company_overview: '',
+  team_details: '',
+  company_location: '',
+  required_skills: '',
+  years_of_experience: '',
+  ctc_range: '',
+  required_joining_timeline: '',
+  work_location_type: '',
+};
+
+export default function VoiceChat() {
+  const [status,           setStatus]          = useState('idle');
+  const [messages,         setMessages]        = useState([]);
+  const [recap,            setRecap]           = useState(null);
+  const [jd,               setJd]              = useState('');
+  const [phone,            setPhone]           = useState('+91');
+  const [name,             setName]            = useState('');
+  const [elapsed,          setElapsed]         = useState(0);
+  const [resumeText,       setResumeText]      = useState('');
+  const [resumeStatus,     setResumeStatus]    = useState('idle'); // idle | uploading | ready | error
+  const [resumeFile,       setResumeFile]      = useState('');
+  const [resumeError,      setResumeError]     = useState('');
+  const [dragOver,         setDragOver]        = useState(false);
+  const [inputMode,        setInputMode]       = useState('prompt');   // 'prompt' | 'structured'
+  const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
+  const [connectingType,   setConnectingType]  = useState(null);
+  const [toast,            setToast]           = useState(null);
+
+  const endRef       = useRef(null);
+  const timerRef     = useRef(null);
+  const fileInputRef = useRef(null);
+  const pollRef      = useRef(null);
+  const wsRef        = useRef(null);
+  const [bars, setBars] = useState(Array(20).fill(0));
+
+  const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
+
+  const showToast = useCallback((message, type = 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -71,615 +148,726 @@ export default function VoiceChat() {
     return () => clearInterval(timerRef.current);
   }, [status]);
 
-  const startWaveform = useCallback(() => {
-    const tick = () => {
-      if (!analyserRef.current) return;
-      const d = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(d);
-      const N = 40, step = Math.max(1, Math.floor(d.length / N));
-      setBars(Array.from({ length: N }, (_, i) => d[i * step] / 255));
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    tick();
-  }, []);
 
-  const playNext = useCallback(async () => {
-    if (!audioQ.current.length) { playing.current = false; setAiSpeaks(false); return; }
-    playing.current = true; setAiSpeaks(true);
-    const buf = audioQ.current.shift();
-    try {
-      const decoded = await audioCtxRef.current.decodeAudioData(buf);
-      const src = audioCtxRef.current.createBufferSource();
-      src.buffer = decoded;
-      src.connect(audioCtxRef.current.destination);
-      src.onended = playNext;
-      src.start(0);
-    } catch { playNext(); }
-  }, []);
 
-  const startMic = useCallback(async () => {
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      alert('Microphone access denied. Please allow microphone access and try again.');
-      cleanup();
-      setStatus('idle');
+  const handleResumeFile = useCallback(async (file) => {
+    if (!file) return;
+    const fname = file.name.toLowerCase();
+    if (!fname.endsWith('.pdf') && !fname.endsWith('.docx')) {
+      setResumeStatus('error');
+      setResumeError('Only PDF and DOCX files are supported');
       return;
     }
-    streamRef.current = stream;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    audioCtxRef.current = ctx;
-    const source  = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 128;
-    analyserRef.current = analyser;
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    procRef.current = proc;
-    proc.onaudioprocess = (e) => {
-      const pcm = floatTo16BitPCM(e.inputBuffer.getChannelData(0));
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(pcm);
-    };
-    source.connect(analyser);
-    analyser.connect(proc);
-    proc.connect(ctx.destination);
-    startWaveform();
-  }, [startWaveform]);
-
-  const cleanup = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
-    wsRef.current?.close();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    procRef.current?.disconnect();
-    audioCtxRef.current?.close().catch(() => {});
-    playing.current = false;
-    audioQ.current  = [];
-    setBars(Array(40).fill(0));
-    setAiSpeaks(false);
+    setResumeFile(file.name);
+    setResumeStatus('uploading');
+    setResumeError('');
+    const form = new FormData();
+    form.append('resume', file);
+    try {
+      const r = await fetch(`${API_BASE}/api/upload-resume/`, { method: 'POST', body: form });
+      const res = await r.json();
+      if (res.status === 'success') {
+        setResumeText(res.text);
+        setResumeStatus('ready');
+      } else {
+        setResumeStatus('error');
+        setResumeError(res.message || 'Upload failed');
+      }
+    } catch {
+      setResumeStatus('error');
+      setResumeError('Network error — check connection');
+    }
   }, []);
 
-  const endSession = useCallback(() => { cleanup(); setStatus('ended'); }, [cleanup]);
+  const clearResume = useCallback(() => {
+    setResumeText('');
+    setResumeStatus('idle');
+    setResumeFile('');
+    setResumeError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
+
+  const cleanup = useCallback(() => {
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    clearInterval(pollRef.current);
+    setBars(Array(20).fill(0));
+    setStatus('ended');
+    setConnectingType(null);
+  }, []);
 
   const startWeb = useCallback(async () => {
-    setStatus('connecting'); setMessages([]); setRecap(null);
-    const url = `${WS_BASE}/ws/voice/?jd=${encodeURIComponent(jd)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onopen    = async () => { setStatus('connected'); await startMic(); };
-    ws.onmessage = async (e) => {
-      if (typeof e.data === 'string') {
-        const d = jsonTry(e.data);
-        if      (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
-        else if (d.type === 'interrupt')  { audioQ.current = []; setAiSpeaks(false); }
-        else if (d.type === 'recap')      { setRecap(d.data); cleanup(); setStatus('ended'); }
-      } else {
-        const ab = await e.data.arrayBuffer();
-        audioQ.current.push(ab);
-        if (!playing.current) playNext();
-      }
-    };
-    ws.onclose = () => { if (wsRef.current) { cleanup(); setStatus(s => s === 'connected' ? 'ended' : s); } };
-    ws.onerror = () => { cleanup(); setStatus('idle'); };
-  }, [jd, name, phone, startMic, cleanup, playNext]);
+    if (!name) { showToast('Please enter a candidate name first'); return; }
+    showToast('Web call coming soon — use phone call for now', 'info');
+  }, [name, showToast]);
+
+  const _startPolling = useCallback((callSid) => {
+    clearInterval(pollRef.current);
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // 5 minutes at 5s intervals
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
+      try {
+        const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
+        if (r.status === 202) return; // still pending
+        const data = await r.json();
+        if (data.status === 'complete') {
+          clearInterval(pollRef.current);
+          const reason = JSON.stringify({ ...(data.notes || {}), candidate_summary: data.candidate_summary });
+          setRecap({ score: data.score, reason });
+          setStatus('ended');
+        }
+      } catch { /* network blip — keep polling */ }
+    }, 5000);
+  }, []);
 
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
+    setConnectingType('phone');
     try {
+      let payload = { phone, name };
+
+      if (inputMode === 'prompt') {
+        payload.jd = jd || 'Software Engineer role';
+      } else {
+        // Build a synthetic JD for AI fallback parsing
+        const sf = structuredFields;
+        const parts = [
+          sf.job_title         && `Role: ${sf.job_title}`,
+          sf.company_overview  && `Company: ${sf.company_overview}`,
+          sf.required_skills   && `Required Skills: ${sf.required_skills}`,
+          sf.years_of_experience && `Experience: ${sf.years_of_experience}`,
+          sf.company_location  && `Location: ${sf.company_location}`,
+          sf.work_location_type && `Work Mode: ${sf.work_location_type}`,
+          sf.ctc_range         && `CTC Range: ${sf.ctc_range}`,
+          sf.required_joining_timeline && `Joining Timeline: ${sf.required_joining_timeline}`,
+          sf.team_details      && `Team: ${sf.team_details}`,
+          jd                   && `Additional Details: ${jd}`,
+        ].filter(Boolean);
+        payload.jd = parts.join('\n') || 'Software Engineer role';
+
+        // Send structured fields as explicit overrides for the AI-parsed context
+        const recruiter_inputs = {};
+        ['company_overview', 'team_details', 'company_location', 'years_of_experience',
+         'ctc_range', 'required_joining_timeline', 'work_location_type'].forEach(k => {
+          if (sf[k]?.trim()) recruiter_inputs[k] = sf[k].trim();
+        });
+        if (Object.keys(recruiter_inputs).length) payload.recruiter_inputs = recruiter_inputs;
+      }
+
       const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, jd, name }),
+        body: JSON.stringify({ ...payload, resume_text: resumeText }),
       });
       const res = await r.json();
       if (res.status === 'success') {
-        setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${res.call_sid}`, time: nowTime() }]);
+        const sid = res.call_sid;
+        setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${sid}`, time: nowTime() }]);
         setStatus('connected');
-      } else { alert(res.message); setStatus('idle'); }
-    } catch { alert('Backend unreachable.'); setStatus('idle'); }
-  }, [phone, jd, name]);
+        // Poll for evaluation results — backend saves DB record after call ends
+        _startPolling(sid);
+      } else { alert(res.message); setStatus('idle'); setConnectingType(null); }
+    } catch { alert('Backend unreachable.'); setStatus('idle'); setConnectingType(null); }
+  }, [phone, jd, name, inputMode, structuredFields, resumeText, _startPolling]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
     return { ...d, score: recap.score ?? d.intent_score };
   })() : null;
 
-  const isIdle = status === 'idle';
-  const isLive = status === 'connected';
-  const isBusy = status === 'connecting';
-  const isDone = status === 'ended';
+  const isIdle  = status === 'idle';
+  const isLive  = status === 'connected';
+  const isBusy  = status === 'connecting';
+  const isDone  = status === 'ended';
+
+  if (isLive) {
+    return (
+      <CallConsole 
+        name={name}
+        phone={phone}
+        elapsed={elapsed}
+        messages={messages}
+        endRef={endRef}
+        onEnd={cleanup}
+        bars={bars}
+        fmt={fmt}
+        status={status}
+      />
+    );
+  }
 
   // ── Status pill config ──────────────────────────────────────────────────────
   const pill = isLive
-    ? { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a', dot: '#22c55e', label: 'Session Live',  pulse: true }
+    ? { bg: 'rgba(111,255,0,0.1)', bd: 'rgba(111,255,0,0.3)', tx: '#6FFF00', dot: '#6FFF00', label: 'SESSION ACTIVE', pulse: true }
     : isBusy
-    ? { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309', dot: '#f59e0b', label: 'Connecting…',   pulse: true }
+    ? { bg: 'rgba(255,255,255,0.1)', bd: 'rgba(255,255,255,0.2)', tx: '#EFF4FF', dot: '#EFF4FF', label: 'CONNECTING...',  pulse: true }
     : isDone
-    ? { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b', dot: '#94a3b8', label: 'Session Ended', pulse: false }
-    : { bg: '#f8fafc', bd: '#e2e8f0', tx: '#94a3b8', dot: '#cbd5e1', label: 'Ready',         pulse: false };
+    ? { bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.1)', tx: 'rgba(239,244,255,0.5)', dot: 'rgba(239,244,255,0.3)', label: 'SESSION ENDED',  pulse: false }
+    : { bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.1)', tx: '#EFF4FF', dot: 'rgba(239,244,255,0.5)', label: 'READY', pulse: false };
 
   return (
-    <div className="min-h-screen flex flex-col">
-
-      {/* ── Ambient orbs (very subtle in light mode) ── */}
-      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none" aria-hidden>
-        <div className="absolute -top-[10%] left-[5%]  w-[800px] h-[800px] rounded-full opacity-60"
-          style={{ background: 'radial-gradient(circle, rgba(199,210,254,0.55) 0%, transparent 65%)', animation: 'drift1 16s ease-in-out infinite' }} />
-        <div className="absolute -bottom-[15%] right-[5%] w-[900px] h-[900px] rounded-full opacity-50"
-          style={{ background: 'radial-gradient(circle, rgba(221,214,254,0.50) 0%, transparent 65%)', animation: 'drift2 20s ease-in-out infinite' }} />
-        <div className="absolute top-[35%] right-[25%]  w-[500px] h-[500px] rounded-full opacity-40"
-          style={{ background: 'radial-gradient(circle, rgba(186,230,253,0.45) 0%, transparent 65%)', animation: 'drift3 12s ease-in-out infinite' }} />
+    <div className="relative min-h-screen bg-background text-cream overflow-hidden font-sans selection:bg-neon selection:text-background">
+      {/* Texture Overlay */}
+      <div 
+        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
+        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      />
+      
+      {/* Background Video */}
+      <div className="fixed inset-0 z-0 opacity-20">
+        <video 
+          className="absolute inset-0 w-full h-full object-cover"
+          autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
+        />
+        <div className="absolute inset-0 bg-background/40" />
+      </div>
+      {/* Texture Overlay */}
+      <div 
+        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
+        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      />
+      
+      {/* Background Video */}
+      <div className="fixed inset-0 z-0 opacity-40">
+        <video 
+          className="absolute inset-0 w-full h-full object-cover"
+          autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4"
+        />
+        <div className="absolute inset-0 bg-background/60" />
       </div>
 
       {/* ── Navigation ── */}
-      <header className="glass-nav sticky top-0 z-30 flex items-center justify-between px-6 py-3">
-        {/* Brand */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', boxShadow: '0 4px 16px rgba(99,102,241,0.30)' }}>
-            <Zap size={14} className="text-white" fill="white" />
+      <header className="relative z-40 px-6 sm:px-12 py-6 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-3">
+          <div className="font-grotesk text-[20px] uppercase tracking-wide">
+            Clarix.Ai
           </div>
-          <div>
-            <h1 className="text-[13px] font-bold tracking-tight text-slate-900 leading-none">Project Vox</h1>
-            <p  className="text-[10px] text-slate-400 mt-[3px] leading-none font-medium">AI-Powered HR Screening</p>
-          </div>
-        </div>
+          <span className="font-condiment text-neon text-[20px] ml-2 -rotate-2">screening</span>
+        </Link>
 
-        {/* Right side */}
-        <div className="flex items-center gap-4">
+        <nav className="hidden lg:flex liquid-glass rounded-[28px] px-12 py-4 items-center gap-10">
+          {[
+            { name: 'Home', path: '/' },
+            { name: 'About', path: '/about' },
+            { name: 'Features', path: '/features' },
+            { name: 'Dashboard', path: '/dashboard' },
+            { name: 'App', path: '/app' },
+          ].map(link => (
+            <Link key={link.name} to={link.path} className={`font-grotesk text-[13px] uppercase tracking-widest transition-colors ${link.path === '/app' ? 'text-neon' : 'hover:text-neon'}`}>
+              {link.name}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-5">
           {isLive && (
-            <span className="text-[12px] font-mono font-semibold text-slate-500 tabular-nums tracking-tight">{fmt(elapsed)}</span>
+            <span className="text-[14px] font-mono font-bold text-cream tabular-nums">{fmt(elapsed)}</span>
           )}
-          {/* Status pill */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold border select-none"
-            style={{
-              background: pill.bg, borderColor: pill.bd, color: pill.tx,
-              animation: (isLive || isBusy) ? 'statusPop 0.28s ease-out' : 'none',
-            }}>
-            <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-              style={{ background: pill.dot, animation: pill.pulse ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
+          <div className="flex items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-mono border select-none transition-colors backdrop-blur-sm"
+            style={{ background: pill.bg, borderColor: pill.bd, color: pill.tx }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: pill.dot, animation: pill.pulse ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
             {pill.label}
           </div>
         </div>
       </header>
 
-      {/* ── Main grid ── */}
-      <main className="flex-1 grid grid-cols-12 gap-4 p-4 max-w-[1440px] w-full mx-auto">
+      {/* ── Main Layout ── */}
+      <main className="relative z-10 flex-1 w-full max-w-[1831px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 lg:p-6 overflow-hidden h-[calc(100vh-88px)]">
 
-        {/* ═══ LEFT — Setup ═══ */}
-        <aside className="col-span-12 lg:col-span-3 flex flex-col gap-3">
+        {/* ═══ LEFT PANEL — Setup ═══ */}
+        <aside className="col-span-12 lg:col-span-3 flex flex-col liquid-glass rounded-[32px] overflow-hidden">
+          <div className="p-4 lg:p-5 flex-1 overflow-y-auto space-y-6 scrollbar-hide">
+            
+            <div className="space-y-1">
+              <h2 className="font-grotesk uppercase text-[22px] leading-none">Role Info</h2>
+              <p className="font-mono text-[11px] text-cream/50 uppercase">Configure AI Parameters</p>
+            </div>
 
-          {/* Job Description */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<Briefcase size={12} />}>Job Description</Label>
-            <textarea
-              rows={8}
-              className="glass-input w-full rounded-xl p-3.5 text-[13px] placeholder-slate-400 resize-none leading-relaxed mt-3"
-              placeholder="Paste the job description here…"
-              value={jd} onChange={e => setJd(e.target.value)} disabled={isLive}
-            />
-          </section>
+            {/* Input Mode Toggle */}
+            <div className="flex p-1 bg-white/5 rounded-[16px] backdrop-blur-md">
+              <button onClick={() => setInputMode('prompt')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'prompt' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Freeform</button>
+              <button onClick={() => setInputMode('structured')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'structured' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Structured</button>
+            </div>
 
-          {/* Candidate */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<User size={12} />}>Candidate</Label>
-            <div className="space-y-2 mt-3">
-              <div className="relative">
-                <User size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <input type="text"
-                  className="glass-input w-full rounded-xl py-2.5 pl-9 pr-3.5 text-[13px]"
-                  placeholder="Full name"
-                  value={name} onChange={e => setName(e.target.value)} disabled={isLive} />
+            {inputMode === 'prompt' ? (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Job Description</label>
+                <textarea
+                  rows={8}
+                  className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-3 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all resize-none backdrop-blur-md"
+                  placeholder="Paste the full job description here..."
+                  value={jd} onChange={e => setJd(e.target.value)} disabled={isLive}
+                />
               </div>
-              <div className="relative">
-                <Phone size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <input type="text"
-                  className="glass-input w-full rounded-xl py-2.5 pl-9 pr-3.5 text-[13px] font-mono"
-                  placeholder="+91 XXXXX XXXXX"
-                  value={phone} onChange={e => setPhone(e.target.value)} disabled={isLive} />
+            ) : (
+              <div className="space-y-5">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Job Title</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. Senior Frontend Engineer" value={structuredFields.job_title} onChange={e => setSF('job_title', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Required Skills</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. React, Node.js, Typescript" value={structuredFields.required_skills} onChange={e => setSF('required_skills', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Years Exp.</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. 5+ Years" value={structuredFields.years_of_experience} onChange={e => setSF('years_of_experience', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">CTC Range</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. 25-30 LPA" value={structuredFields.ctc_range} onChange={e => setSF('ctc_range', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Location</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="Bangalore" value={structuredFields.company_location} onChange={e => setSF('company_location', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Joining</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="Immediate" value={structuredFields.required_joining_timeline} onChange={e => setSF('required_joining_timeline', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Work Mode</label>
+                  <div className="flex gap-2">
+                    {WORK_LOCATION_OPTIONS.map(opt => {
+                      const active = structuredFields.work_location_type === opt;
+                      return (
+                        <button key={opt} disabled={isLive} onClick={() => setSF('work_location_type', active ? '' : opt)}
+                          className={`flex-1 py-2 rounded-[12px] text-[11px] font-mono uppercase transition-all backdrop-blur-md ${active ? 'bg-neon/20 border border-neon text-neon' : 'bg-white/5 border border-white/10 text-cream/50 hover:bg-white/10 hover:text-cream'}`}>
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="h-px bg-white/10" />
+
+            <div className="space-y-4">
+              <h3 className="font-grotesk uppercase text-[24px] leading-none">Candidate</h3>
+              <div className="space-y-3">
+                <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 py-3 px-4 text-[13px] font-mono text-cream focus:outline-none focus:ring-1 focus:ring-neon transition-all placeholder-cream/30 backdrop-blur-md"
+                  placeholder="Full name" value={name} onChange={e => setName(e.target.value)} disabled={isLive} />
+                <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 py-3 px-4 text-[13px] font-mono text-cream focus:outline-none focus:ring-1 focus:ring-neon transition-all placeholder-cream/30 backdrop-blur-md"
+                  placeholder="+91 XXXXX XXXXX" value={phone} onChange={e => setPhone(e.target.value)} disabled={isLive} />
               </div>
             </div>
-          </section>
 
-          {/* CTA buttons */}
-          <div className="space-y-2">
+            <div className="space-y-4">
+              <h3 className="font-grotesk uppercase text-[24px] leading-none">Resume Context</h3>
+              <div
+                className="rounded-[16px] border border-white/10 transition-all cursor-pointer overflow-hidden group bg-white/5 backdrop-blur-md"
+                style={{
+                  borderColor: dragOver ? '#6FFF00' : resumeStatus === 'ready' ? '#6FFF00' : resumeStatus === 'error' ? '#ef4444' : 'rgba(255,255,255,0.1)',
+                  background:  dragOver ? 'rgba(111,255,0,0.05)' : resumeStatus === 'ready' ? 'rgba(111,255,0,0.02)' : 'rgba(255,255,255,0.02)',
+                }}
+                onDragOver={(e) => { e.preventDefault(); if (!isLive) setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!isLive) handleResumeFile(e.dataTransfer.files[0]); }}
+                onClick={() => { if (!isLive && resumeStatus !== 'uploading') fileInputRef.current?.click(); }}
+              >
+                <input ref={fileInputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={(e) => handleResumeFile(e.target.files[0])} />
+
+                {resumeStatus === 'idle' && (
+                  <div className="py-6 flex flex-col items-center gap-2 group-hover:bg-white/5 transition-colors">
+                    <Upload size={16} className="text-cream/50" />
+                    <p className="font-mono text-[11px] text-cream/50 uppercase">Drop PDF/DOCX here</p>
+                  </div>
+                )}
+
+                {resumeStatus === 'uploading' && (
+                  <div className="py-6 flex flex-col items-center gap-2">
+                    <Loader2 size={16} className="text-neon animate-spin" />
+                    <p className="font-mono text-[11px] text-neon uppercase">Parsing resume...</p>
+                  </div>
+                )}
+
+                {resumeStatus === 'ready' && (
+                  <div className="py-4 px-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-neon/20 flex items-center justify-center flex-shrink-0">
+                      <CheckCircle size={14} className="text-neon" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[11px] text-neon truncate">{resumeFile}</p>
+                      <p className="font-mono text-[9px] text-neon/70 mt-0.5">{resumeText.length.toLocaleString()} chars</p>
+                    </div>
+                  </div>
+                )}
+
+                {resumeStatus === 'error' && (
+                  <div className="py-4 px-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                      <XCircle size={14} className="text-red-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[11px] text-red-400 leading-snug">{resumeError}</p>
+                      <p className="font-mono text-[9px] text-red-400/70 mt-0.5">Click to try again</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {resumeStatus === 'ready' && (
+                <button onClick={(e) => { e.stopPropagation(); clearResume(); }} className="w-full font-mono text-[10px] text-cream/40 hover:text-red-400 uppercase transition-colors text-left pl-1">
+                  Remove attachment
+                </button>
+              )}
+            </div>
+            <div className="pb-4" />
+          </div>
+
+          {/* CTA Footer */}
+          <div className="p-5 border-t border-white/10 bg-black/20 backdrop-blur-xl">
             {isLive ? (
-              <button onClick={endSession}
-                className="btn-danger w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                <Square size={14} fill="currentColor" />
-                End Session
-              </button>
+              <div className="flex gap-2">
+                <div className="flex-1 py-3.5 rounded-[16px] font-grotesk text-[20px] uppercase flex items-center justify-center gap-2 text-neon bg-neon/10 border border-neon/30 select-none">
+                  {wsRef.current ? <Mic size={18} className="animate-pulse" /> : <PhoneCall size={18} className="animate-pulse" />}
+                  Active Session
+                </div>
+                {wsRef.current && (
+                  <button onClick={cleanup} className="bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/50 hover:border-red-500 px-6 rounded-[16px] flex items-center justify-center transition-colors">
+                    <Square size={16} fill="currentColor" />
+                  </button>
+                )}
+              </div>
             ) : (
-              <>
-                <button onClick={startWeb} disabled={isBusy}
-                  className="btn-primary w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                  {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-                  {isBusy ? 'Initializing…' : 'Start Web Session'}
+              <div className="flex flex-col gap-2">
+                <button onClick={startWeb} disabled={isBusy || !name}
+                  className="w-full py-3.5 rounded-[16px] font-grotesk text-[24px] uppercase flex items-center justify-center gap-3 bg-neon text-background hover:bg-[#8aff2a] disabled:opacity-50 disabled:bg-white/10 disabled:text-cream/50 transition-colors shadow-[0_0_20px_rgba(111,255,0,0.2)]">
+                  {isBusy && connectingType === 'web' ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}
+                  {isBusy && connectingType === 'web' ? 'CONNECTING...' : 'START WEB CALL'}
                 </button>
                 <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
-                  className="btn-ghost w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                  <PhoneCall size={14} />
-                  Trigger Outbound Call
+                  className="w-full py-3.5 rounded-[16px] font-grotesk text-[20px] uppercase flex items-center justify-center gap-2 bg-transparent text-cream border border-cream/20 hover:bg-white/5 disabled:opacity-50 transition-colors">
+                  {isBusy && connectingType === 'phone' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                  {isBusy && connectingType === 'phone' ? 'INITIATING...' : 'CALL PHONE'}
                 </button>
-              </>
+              </div>
             )}
-            {isDone && (
-              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); }}
-                className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
-                ↺ New Session
+            {(isLive || isDone) && (
+              <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
+                className="w-full mt-3 py-2 font-mono text-[10px] text-cream/40 hover:text-cream uppercase tracking-widest transition-colors">
+                Start New Session
               </button>
             )}
           </div>
-
-          {/* AI Stack */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<Sparkles size={12} />}>AI Stack</Label>
-            <div className="mt-3 space-y-2">
-              {[
-                { label: 'STT', value: 'Deepgram nova-2 · Hinglish' },
-                { label: 'LLM', value: 'Groq · llama-3.3-70b' },
-                { label: 'TTS', value: 'Sarvam → ElevenLabs → DG' },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">{label}</span>
-                  <span className="text-[11px] font-semibold text-indigo-600">{value}</span>
-                </div>
-              ))}
-            </div>
-          </section>
         </aside>
 
-        {/* ═══ CENTER — Chat ═══ */}
-        <section className="col-span-12 lg:col-span-6">
-          <div className="glass rounded-2xl flex flex-col" style={{ minHeight: 640 }}>
+        {/* ═══ CENTER PANEL — Log ═══ */}
+        <section className="col-span-12 lg:col-span-6 flex flex-col liquid-glass rounded-[32px] overflow-hidden relative">
+          
+          <div className="px-8 py-5 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
+            <h2 className="font-grotesk uppercase text-[22px] leading-none">Transcript</h2>
+            <MessageSquare size={16} className="text-cream/50" />
+          </div>
 
-            {/* Chat header */}
-            <div className="px-5 py-4 flex items-center justify-between border-b border-black/[0.05]">
-              <div className="flex items-center gap-2">
-                <MessageSquare size={13} className="text-indigo-500" />
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Live Screening Log
-                </span>
+          <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 lg:space-y-6 scrollbar-hide bg-black/20">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center gap-5 select-none opacity-80">
+                <div className="w-16 h-16 rounded-[20px] liquid-glass flex items-center justify-center text-neon shadow-[0_0_30px_rgba(111,255,0,0.15)]">
+                  <Sparkles size={24} />
+                </div>
+                <div className="text-center space-y-1">
+                  <p className="font-grotesk text-[32px] uppercase tracking-wide">Awaiting Signal</p>
+                  <p className="font-mono text-[12px] text-cream/50 max-w-[240px] mx-auto">Fill the parameters and initiate the screening.</p>
+                </div>
               </div>
-              {aiSpeaks && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-indigo-600">Speaking</span>
-                  <div className="flex items-end gap-[2px]" style={{ height: 16 }}>
-                    {Array.from({ length: 5 }, (_, i) => (
-                      <div key={i} className="w-[2.5px] rounded-full bg-indigo-500"
-                        style={{ height: '100%', transformOrigin: 'bottom',
-                          animation: `voxBar 0.7s ease-in-out ${i * 0.1}s infinite` }} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5 scrollbar-hide">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center gap-4 select-none" style={{ minHeight: 340 }}>
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.10))', border: '1px solid rgba(99,102,241,0.14)' }}>
-                    <Zap size={22} className="text-indigo-500" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-400">Ready to Screen</p>
-                    <p className="text-xs text-slate-300 mt-1.5">Configure the role above and start a session.</p>
-                  </div>
-                </div>
-              ) : (
-                messages.map((m, i) => {
-                  if (m.role === 'system') return (
-                    <div key={i} className="flex justify-center msg-in">
-                      <div className="text-[11px] text-slate-400 italic px-4 py-1.5 rounded-full"
-                        style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.11)' }}>
+            ) : (
+              messages.map((m, i) => (
+                <div key={i} className={`flex flex-col ${m.role === 'system' ? 'items-center' : m.role === 'user' ? 'items-end' : 'items-start'} max-w-full`}>
+                  {m.role === 'system' ? (
+                    <div className="font-mono text-[9px] uppercase text-neon/80 bg-neon/10 border border-neon/20 px-4 py-1.5 rounded-full my-2">
+                      {m.text}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 max-w-[85%]">
+                      <span className={`font-mono text-[10px] uppercase tracking-widest ${m.role === 'user' ? 'text-cream/50 text-right' : 'text-neon text-left'}`}>
+                        {m.role === 'user' ? (name || 'CANDIDATE') : 'PRIYA AI'}
+                      </span>
+                      <div className={`font-mono text-[13px] leading-relaxed px-5 py-4 shadow-sm ${m.role === 'user' ? 'bg-cream text-background rounded-[20px] rounded-tr-sm' : 'liquid-glass text-cream rounded-[20px] rounded-tl-sm'}`}>
                         {m.text}
                       </div>
                     </div>
-                  );
+                  )}
+                </div>
+              ))
+            )}
+            <div ref={endRef} />
+          </div>
 
-                  const isVox = m.role === 'vox';
-                  return (
-                    <div key={i} className={`flex gap-2.5 msg-in ${isVox ? '' : 'flex-row-reverse'}`}>
-                      {/* Avatar */}
-                      <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-[11px] font-bold mt-0.5"
-                        style={isVox
-                          ? { background: 'linear-gradient(135deg, rgba(99,102,241,0.14), rgba(139,92,246,0.14))', border: '1px solid rgba(99,102,241,0.22)', color: '#6366f1' }
-                          : { background: 'rgba(15,23,42,0.06)', border: '1px solid rgba(15,23,42,0.10)', color: '#475569' }
-                        }>
-                        {isVox ? 'V' : (name?.[0]?.toUpperCase() || 'C')}
-                      </div>
-
-                      <div className="max-w-[76%]">
-                        {/* Meta */}
-                        <div className={`flex items-baseline gap-2 mb-1.5 ${isVox ? '' : 'flex-row-reverse'}`}>
-                          <span className="text-[11px] font-semibold" style={{ color: isVox ? '#6366f1' : '#475569' }}>
-                            {isVox ? 'Vox' : (name || 'Candidate')}
-                          </span>
-                          <span className="text-[10px] text-slate-300">{m.time}</span>
-                        </div>
-                        {/* Bubble */}
-                        <div className="px-4 py-3 rounded-2xl text-[13px] leading-relaxed"
-                          style={isVox
-                            ? { background: 'rgba(255,255,255,0.90)', border: '1px solid rgba(0,0,0,0.07)',
-                                boxShadow: '0 2px 10px rgba(0,0,0,0.05)', color: '#334155', borderTopLeftRadius: 4 }
-                            : { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                                border: '1px solid rgba(99,102,241,0.25)',
-                                boxShadow: '0 4px 16px rgba(99,102,241,0.25)', color: '#ffffff', borderTopRightRadius: 4 }
-                          }>
-                          {m.text}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <div ref={endRef} />
+          {/* Status footer */}
+          <div className="p-5 border-t border-white/10 flex items-center justify-between bg-black/20 backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full" style={{ background: isLive ? '#6FFF00' : 'rgba(255,255,255,0.3)', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
+              <span className="font-mono text-[11px] uppercase tracking-widest text-cream/60">
+                {isLive ? (wsRef.current ? 'WEB CALL ACTIVE' : 'CALL IN PROGRESS') : 'NO ACTIVE CALL'}
+              </span>
             </div>
-
-            {/* Waveform footer */}
-            <div className="px-5 pb-4 pt-3 border-t border-black/[0.05]">
-              <div className="flex items-center gap-2 mb-2.5">
-                <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                  style={{ background: isLive ? '#22c55e' : '#cbd5e1', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
-                <span className="text-[10px] font-medium text-slate-400">
-                  {isLive ? 'Microphone Active' : 'Microphone Idle'}
-                </span>
-              </div>
-              <div className="flex items-end justify-between gap-[2px]" style={{ height: 36 }}>
+            {wsRef.current && (
+              <div className="flex items-end justify-between gap-1 w-24 h-5">
                 {bars.map((lvl, i) => (
                   <div key={i} className="flex-1 rounded-full transition-all duration-75"
                     style={{
-                      height: `${Math.max(2, lvl * 36)}px`,
-                      background: lvl > 0.05
-                        ? `linear-gradient(to top, #6366f1, #a78bfa)`
-                        : '#e2e8f0',
-                      opacity: lvl > 0.05 ? 0.45 + lvl * 0.55 : 1,
-                    }} />
+                      height: `${Math.max(4, lvl * 20)}px`,
+                      background: lvl > 0.05 ? '#6FFF00' : 'rgba(255,255,255,0.1)'
+                    }}
+                  />
                 ))}
               </div>
-            </div>
+            )}
           </div>
         </section>
 
-        {/* ═══ RIGHT — Info / Scorecard ═══ */}
-        <aside className="col-span-12 lg:col-span-3 space-y-3 overflow-y-auto scrollbar-hide"
-          style={{ maxHeight: 'calc(100vh - 5rem)' }}>
-
+        {/* ═══ RIGHT PANEL — Info / Scorecard ═══ */}
+        <aside className="col-span-12 lg:col-span-3 flex flex-col overflow-y-auto scrollbar-hide space-y-6">
           {!report ? (
             <>
-              {/* Session info */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<Activity size={12} />}>Session</Label>
-                <div className="mt-3 space-y-3">
-                  <InfoRow label="Status"
-                    value={
-                      isLive ? <Chip color="emerald">Live</Chip> :
-                      isBusy ? <Chip color="amber">Connecting</Chip> :
-                      isDone ? <Chip color="slate">Ended</Chip> :
-                      <span className="text-[11px] text-slate-300">—</span>
-                    } />
-                  {isLive && (
-                    <InfoRow label="Duration"
-                      value={<span className="text-[12px] font-mono font-semibold text-indigo-600 tabular-nums">{fmt(elapsed)}</span>} />
-                  )}
-                  <InfoRow label="Candidate"
-                    value={<span className="text-[12px] font-medium text-slate-600 truncate max-w-[110px]">{name || '—'}</span>} />
-                  <InfoRow label="Channel"
-                    value={<span className="text-[12px] text-slate-500">{phone && phone !== '+91' ? 'Outbound' : 'Web'}</span>} />
+              <div className="liquid-glass rounded-[24px] p-4 lg:p-5">
+                <h3 className="font-grotesk uppercase text-[22px] leading-none mb-4 flex items-center justify-between">
+                  Telemetry <Activity size={18} className="text-neon" />
+                </h3>
+                <div className="space-y-4">
+                  <InfoRow label="Status" value={
+                    isLive ? <span className="px-2 py-0.5 bg-neon/20 text-neon border border-neon/30 rounded-[8px] font-mono text-[10px] uppercase">LIVE</span> :
+                    isBusy ? <span className="px-2 py-0.5 bg-white/10 text-cream border border-white/20 rounded-[8px] font-mono text-[10px] uppercase">CONNECT</span> :
+                    isDone ? <span className="px-2 py-0.5 bg-black/50 text-cream/50 border border-white/10 rounded-[8px] font-mono text-[10px] uppercase">ENDED</span> :
+                    <span className="font-mono text-[11px] text-cream/30">—</span>
+                  } />
+                  {isLive && <InfoRow label="Duration" value={<span className="font-mono text-[13px] text-cream">{fmt(elapsed)}</span>} />}
+                  <InfoRow label="Candidate" value={<span className="font-mono text-[12px] text-cream truncate max-w-[120px]">{name || '—'}</span>} />
+                  <InfoRow label="Engine" value={<span className="font-mono text-[11px] text-cream flex items-center gap-1"><Sparkles size={10} className="text-neon"/> Gemini</span>} />
                 </div>
-              </section>
+              </div>
 
-              {/* Screening goals */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<CheckCircle size={12} />}>Screening Goals</Label>
-                <ul className="mt-3 space-y-2">
-                  {[
-                    'Confirm interest & availability',
-                    'Verify 2–3 key technical skills',
-                    'Capture salary expectation (LPA)',
-                    'Note period / joining date',
-                    'Cultural fit (internal score)',
-                  ].map((item, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[12px] text-slate-500 leading-snug">
-                      <span className="text-indigo-400 mt-[1px] text-[10px] flex-shrink-0">▸</span>
-                      {item}
+              <div className="liquid-glass rounded-[24px] p-4 lg:p-5">
+                <h3 className="font-grotesk uppercase text-[22px] leading-none mb-4 flex items-center justify-between">
+                  Goals <CheckCircle size={18} className="text-neon" />
+                </h3>
+                <ul className="space-y-3">
+                  {['Confirm interest', 'Verify core tech', 'Capture salary', 'Note timeline', 'Assess culture'].map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 font-mono text-[11px] uppercase text-cream/70 leading-snug">
+                      <span className="text-neon mt-[1px] text-[10px] flex-shrink-0">◆</span> {item}
                     </li>
                   ))}
                 </ul>
-              </section>
+              </div>
 
-              {/* Language */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<MessageSquare size={12} />}>Languages</Label>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {['English', 'Hindi', 'Hinglish'].map((l) => (
-                    <span key={l} className="text-[11px] font-semibold px-3 py-1 rounded-lg"
-                      style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.16)', color: '#4f46e5' }}>
-                      {l}
-                    </span>
-                  ))}
+              <Link to="/dashboard" className="liquid-glass rounded-[24px] p-4 lg:p-5 flex items-center justify-between group hover:border-neon/30 border border-white/10 transition-colors">
+                <div>
+                  <p className="font-mono text-[10px] text-cream/50 uppercase tracking-widest mb-1">Analytics</p>
+                  <p className="font-grotesk text-[18px] uppercase text-cream group-hover:text-neon transition-colors">View Dashboard</p>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-2.5 leading-relaxed">
-                  Vox mirrors the candidate's language — Indian accent via Sarvam AI.
-                </p>
-              </section>
+                <div className="w-10 h-10 rounded-[14px] bg-neon/10 border border-neon/20 flex items-center justify-center group-hover:bg-neon/20 transition-colors">
+                  <BarChart3 size={18} className="text-neon" />
+                </div>
+              </Link>
             </>
           ) : (
             <Scorecard report={report} name={name} />
           )}
         </aside>
       </main>
-    </div>
-  );
-}
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-function Label({ icon, children }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-indigo-500">{icon}</span>
-      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">{children}</span>
+      {/* ── Toast Notification ── */}
+      {toast && (
+        <div className="fixed bottom-8 right-8 z-50 animate-toast">
+          <div className={`px-5 py-3.5 flex items-center gap-3 rounded-[16px] liquid-glass border ${
+            toast.type === 'error' ? 'border-red-500/50 text-red-400' : 'border-neon/50 text-neon'
+          }`}>
+            {toast.type === 'error' ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
+            <span className="font-mono text-[12px] uppercase">{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-3 opacity-50 hover:opacity-100 transition-opacity">✕</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function InfoRow({ label, value }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-slate-400 flex-shrink-0">{label}</span>
-      <span>{value}</span>
+    <div className="flex items-center justify-between gap-4">
+      <span className="font-mono text-[11px] uppercase text-cream/50 flex-shrink-0">{label}</span>
+      <div className="text-right">{value}</div>
     </div>
   );
 }
 
-function Chip({ color = 'slate', children }) {
-  const map = {
-    emerald: { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a' },
-    amber:   { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309' },
-    rose:    { bg: '#fff1f2', bd: '#fecdd3', tx: '#e11d48' },
-    slate:   { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b' },
-    indigo:  { bg: '#eef2ff', bd: '#c7d2fe', tx: '#4f46e5' },
-  };
-  const s = map[color] || map.slate;
-  return (
-    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md"
-      style={{ background: s.bg, border: `1px solid ${s.bd}`, color: s.tx }}>
-      {children}
-    </span>
-  );
-}
-
 function Scorecard({ report, name }) {
+  const [copied, setCopied] = useState(false);
   const outcome = OUTCOME[report.call_outcome] || OUTCOME.CONFUSED;
   const OutIcon = outcome.Icon;
   const score   = typeof report.score === 'number' ? report.score : null;
+  const conf    = report.overall_confidence;
+
+  const handleExport = () => {
+    navigator.clipboard.writeText(buildExportText(report, name))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })
+      .catch(() => {});
+  };
+
+  const hasDimensions = DIMS.some(d => report[d.key]);
+  const hasMetrics = report.salary_expectation_lpa != null || report.current_ctc_lpa != null
+    || report.notice_period_days != null || report.joining_timeline || report.other_offers != null;
 
   return (
-    <div className="space-y-3" style={{ animation: 'scoreDrop 0.35s ease-out' }}>
+    <div className="liquid-glass rounded-[32px] overflow-hidden">
+      <div className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
+        <h3 className="font-grotesk uppercase text-[22px] leading-none">
+          Report
+        </h3>
+        <button onClick={handleExport}
+          className="flex items-center gap-1.5 font-mono text-[10px] uppercase px-3 py-1.5 rounded-[8px] transition-all border"
+          style={{ background: copied ? 'rgba(111,255,0,0.1)' : 'rgba(255,255,255,0.05)', borderColor: copied ? 'rgba(111,255,0,0.3)' : 'rgba(255,255,255,0.1)', color: copied ? '#6FFF00' : '#EFF4FF' }}>
+          <Copy size={12} /> {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
 
-      {/* Hero */}
-      <section className="glass rounded-2xl p-5">
-        <Label icon={<Activity size={12} />}>Screening Report</Label>
-
-        <div className="flex items-center gap-4 mt-4 mb-4">
-          {/* Score ring */}
-          <div className="relative w-[72px] h-[72px] flex-shrink-0 rounded-2xl flex flex-col items-center justify-center"
-            style={{ background: scoreBg(score), border: `1.5px solid ${scoreBd(score)}` }}>
-            <span className="text-[30px] font-black leading-none" style={{ color: scoreColor(score) }}>
+      <div className="p-6 space-y-8">
+        <div className="flex items-center gap-5">
+          <div className="w-[84px] h-[84px] flex-shrink-0 rounded-[24px] flex flex-col items-center justify-center bg-white/5 border border-white/10">
+            <span className="font-grotesk text-[48px] leading-none text-cream">
               {score ?? '—'}
             </span>
-            <span className="text-[9px] text-slate-400 font-semibold mt-0.5">/10</span>
+            <span className="font-mono text-[9px] text-cream/40 uppercase mt-1">/10 Score</span>
           </div>
-
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-slate-400 mb-2 font-medium">Call Outcome</p>
-            <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${outcome.cls}`}>
-              <OutIcon size={11} />
-              {outcome.label}
+          <div className="flex-1 min-w-0 space-y-2">
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 mb-1.5 uppercase">Outcome</p>
+              <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[12px] border font-mono text-[11px] uppercase ${outcome.cls.includes('emerald') ? 'text-neon bg-neon/10 border-neon/30' : outcome.cls.includes('red') ? 'text-red-400 bg-red-500/10 border-red-500/30' : 'text-cream bg-white/5 border-white/10'}`}>
+                <OutIcon size={12} /> {outcome.label}
+              </div>
             </div>
+            {conf != null && (
+              <div className="flex items-center gap-1.5 mt-2">
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-neon" />
+                <span className="font-mono text-[9px] uppercase text-cream/70">
+                  {confLabel(conf)} Conf <span className="text-cream/40">({Math.round(conf * 100)}%)</span>
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
         {report.vibe_check && (
-          <blockquote className="text-[12px] text-slate-500 italic leading-relaxed border-l-2 pl-3 mt-2"
-            style={{ borderColor: 'rgba(99,102,241,0.30)' }}>
+          <div className="p-4 rounded-[16px] bg-white/5 border border-white/10 font-mono text-[12px] italic text-cream/80 leading-relaxed">
             "{report.vibe_check}"
-          </blockquote>
+          </div>
         )}
-      </section>
 
-      {/* Key metrics */}
-      {(report.salary_expectation_lpa || report.notice_period_days || report.joining_timeline) && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<Activity size={12} />}>Key Metrics</Label>
-          <div className="grid grid-cols-2 gap-2 mt-3">
-            {report.salary_expectation_lpa && (
-              <MetricTile label="Salary" value={`${report.salary_expectation_lpa} LPA`} />
-            )}
-            {report.notice_period_days && (
-              <MetricTile label="Notice" value={`${report.notice_period_days} days`} />
-            )}
-            {report.joining_timeline && (
-              <MetricTile label="Joining" value={report.joining_timeline} wide />
-            )}
-          </div>
-        </section>
-      )}
+        <div className="space-y-6">
+          {report.summary_bullets?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Summary</p>
+              <ul className="space-y-2">
+                {report.summary_bullets.map((b, i) => (
+                  <li key={i} className="flex items-start gap-2.5 font-mono text-[11px] text-cream/80 leading-relaxed">
+                    <span className="text-neon mt-[2px] flex-shrink-0 text-[10px]">■</span> {b}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
-      {/* Verified skills */}
-      {report.skills_verified?.length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<CheckCircle size={12} />}>Verified Skills</Label>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {report.skills_verified.map((s, i) => (
-              <span key={i} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg"
-                style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#059669' }}>
-                {s}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Summary */}
-      {report.summary_bullets?.length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<MessageSquare size={12} />}>Summary</Label>
-          <ul className="space-y-2 mt-3">
-            {report.summary_bullets.map((b, i) => (
-              <li key={i} className="flex items-start gap-2 text-[12px] text-slate-600 leading-relaxed">
-                <span className="text-indigo-400 mt-0.5 flex-shrink-0">·</span>
-                {b}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Live notes */}
-      {report.live_notes && Object.keys(report.live_notes).length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<Activity size={12} />}>Captured Notes</Label>
-          <div className="space-y-2.5 mt-3">
-            {Object.entries(report.live_notes).map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                <span className="text-[11px] font-semibold text-slate-700 truncate max-w-[110px]">{String(v)}</span>
+          {hasMetrics && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Metrics</p>
+              <div className="grid grid-cols-2 gap-3">
+                {report.salary_expectation_lpa != null && <MetricTile label="Exp CTC" value={`${report.salary_expectation_lpa} LPA`} />}
+                {report.current_ctc_lpa != null        && <MetricTile label="Cur CTC" value={`${report.current_ctc_lpa} LPA`} />}
+                {report.notice_period_days != null     && <MetricTile label="Notice" value={`${report.notice_period_days} Days`} />}
+                {report.joining_timeline               && <MetricTile label="Joining" value={report.joining_timeline} wide />}
               </div>
-            ))}
-          </div>
-        </section>
-      )}
+            </div>
+          )}
 
-      {/* HR flags */}
-      {report.hr_flags?.length > 0 && (
-        <section className="glass rounded-2xl p-5"
-          style={{ background: 'rgba(255,251,235,0.85)', borderColor: 'rgba(251,191,36,0.25)' }}>
-          <div className="flex items-center gap-1.5 mb-3">
-            <AlertTriangle size={12} className="text-amber-500" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-amber-600">HR Flags</span>
-          </div>
-          <ul className="space-y-2">
-            {report.hr_flags.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-[12px] text-amber-700 leading-relaxed">
-                <span className="flex-shrink-0 mt-0.5">·</span>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+          {hasDimensions && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Dimensions</p>
+              <div className="space-y-2.5">
+                {DIMS.map(d => {
+                  const dim = report[d.key];
+                  if (!dim) return null;
+                  const DIcon = d.Icon;
+                  return (
+                    <div key={d.key} className="flex flex-col gap-2 p-3 rounded-[16px] border border-white/10 bg-white/5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <DIcon size={12} className="text-cream/50" />
+                          <span className="font-mono text-[10px] uppercase text-cream/80">{d.label}</span>
+                        </div>
+                        <span className="font-mono text-[11px] text-neon">{dim.score}/10</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden">
+                        <div className="h-full bg-neon rounded-full" style={{ width: `${(dim.score / 10) * 100}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {report.skills_verified?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Skills Verified</p>
+              <div className="flex flex-wrap gap-2">
+                {report.skills_verified.map((s, i) => (
+                  <span key={i} className="font-mono text-[10px] px-3 py-1.5 rounded-[10px] bg-neon/10 border border-neon/20 text-neon uppercase">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {report.recommended_next_step && (
+            <div className="p-4 rounded-[16px] bg-neon/5 border border-neon/20">
+              <p className="font-mono text-[10px] text-neon uppercase mb-2 flex items-center gap-1.5">
+                <Zap size={10} /> Recommended Action
+              </p>
+              <p className="font-mono text-[12px] text-cream/80 leading-relaxed">{report.recommended_next_step}</p>
+            </div>
+          )}
+
+          {report.hr_flags?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-red-400 uppercase mb-3">HR Flags</p>
+              <ul className="space-y-2">
+                {report.hr_flags.map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 font-mono text-[11px] text-red-400 bg-red-500/10 px-3 py-2 rounded-[12px] border border-red-500/20">
+                    <span className="text-red-500 mt-[1px] flex-shrink-0">⚠</span> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function MetricTile({ label, value, wide }) {
   return (
-    <div className={`rounded-xl p-3 ${wide ? 'col-span-2' : ''}`}
-      style={{ background: 'rgba(248,250,252,0.9)', border: '1px solid rgba(15,23,42,0.08)' }}>
-      <p className="text-[10px] text-slate-400 mb-0.5 font-medium">{label}</p>
-      <p className="text-[13px] font-bold text-slate-800">{value}</p>
+    <div className={`p-3 rounded-[16px] bg-white/5 border border-white/10 ${wide ? 'col-span-2' : ''}`}>
+      <p className="font-mono text-[9px] text-cream/50 mb-1 uppercase">{label}</p>
+      <p className="font-mono text-[12px] text-cream truncate">{value}</p>
     </div>
   );
 }

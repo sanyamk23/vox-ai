@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:15
+    restart: unless-stopped
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -8,52 +9,62 @@ services:
       - POSTGRES_USER=vox_user
       - POSTGRES_PASSWORD=vox_pass
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vox_user -d vox_db"]
+      test: [ "CMD-SHELL", "pg_isready -U vox_user -d vox_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   backend:
     build: ./backend
-    # Removed bind mounts to bypass macOS permission issues
+    restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     environment:
       - DATABASE_URL=postgres://vox_user:vox_pass@db:5432/vox_db
       - REDIS_URL=redis://redis:6379/0
-      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DEBUG=${DEBUG:-True}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHAT_LOG_LEVEL=${CHAT_LOG_LEVEL:-INFO}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-https://*.ngrok-free.app,https://*.ngrok.io}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
       - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.1-flash-live-preview}
+      - GEMINI_SUMMARY_MODEL=${GEMINI_SUMMARY_MODEL:-gemini-2.5-flash}
+      - GEMINI_VOICE=${GEMINI_VOICE:-Aoede}
       - PUBLIC_URL=${PUBLIC_URL}
-      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
-      - SARVAM_SPEAKER=${SARVAM_SPEAKER:-shreya}
-      - SARVAM_MODEL=${SARVAM_MODEL:-bulbul:v3}
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-django-insecure-vox-ai-secret-change-in-production}
-      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
-      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
-      - SIGNALWIRE_PROJECT_ID=${SIGNALWIRE_PROJECT_ID:-}
-      - SIGNALWIRE_TOKEN=${SIGNALWIRE_TOKEN:-}
-      - SIGNALWIRE_SPACE=${SIGNALWIRE_SPACE:-}
-      - SIGNALWIRE_PHONE_NUMBER=${SIGNALWIRE_PHONE_NUMBER:-}
-      - GROQ_API_KEY_1=${GROQ_API_KEY_1}
-      - GROQ_API_KEY_2=${GROQ_API_KEY_2:-}
-      - GROQ_API_KEY_3=${GROQ_API_KEY_3:-}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-django-insecure-dev-only-do-not-use-in-production}
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8000/health/" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
 
   frontend:
     build: ./frontend
-    # Removed bind mounts to bypass macOS permission issues
+    restart: unless-stopped
     ports:
       - "5173:5173"
     environment:

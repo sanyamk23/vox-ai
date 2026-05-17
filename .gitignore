@@ -25,6 +25,26 @@ frontend/node_modules/
 .docker_data/
 postgres_data/
 
+# Nested working tree (separate git repo)
+vox-ai/
+
+# Terraform — never commit real secrets
+terraform/terraform.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+
+# One-off patch/build scripts (root level)
+patch_*.py
+build_new_ui.py
+dump_jsx.py
+remove_socials.py
+update_landing.py
+wrap_link.py
+patch_css.sh
+frontend/patch_*.py
+
 # Logs
 *.log
 npm-debug.log*
