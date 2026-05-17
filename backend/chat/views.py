@@ -84,27 +84,6 @@ def upload_resume(request):
     return JsonResponse({"status": "success", "text": capped, "chars": len(capped)})
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def create_web_session(request):
-    """UI web session — POST /api/web-session/ with {jd, name, phone, resume_text}."""
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse(
-            {"status": "error", "message": "Invalid JSON body"}, status=400
-        )
-
-    jd = _sanitize(data.get("jd") or "Software Engineer role", _MAX_JD_LENGTH)
-    name = _sanitize(data.get("name") or "Candidate", _MAX_NAME_LENGTH)
-    phone = _sanitize(data.get("phone") or "", 20)
-    resume_text = _sanitize(data.get("resume_text") or "", _MAX_RESUME_LENGTH)
-
-    token = str(uuid.uuid4())
-    session_data = {"jd": jd, "name": name, "phone": phone, "resume_text": resume_text}
-    cache.set(f"vox_web:{token}", session_data, timeout=3600)
-
-    return JsonResponse({"status": "success", "token": token})
 
 
 def _validate_e164(number: str) -> bool:

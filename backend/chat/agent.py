@@ -176,6 +176,7 @@ After acknowledging, respond to what they actually said — do NOT resume what y
 
 # STRICT ANTI-PATTERNS — NEVER DO THESE
   · Never talk over the candidate — stop the moment they start speaking
+  · Never greet the candidate without using their actual name "{name}". Do not say "there" or "Candidate" unless their name is truly unknown.
   · Never ask two questions in one turn
   · Never use "Great!" "Fantastic!" "Absolutely!" as a filler — it sounds fake
   · Never ask something the candidate already answered
@@ -220,6 +221,14 @@ VOX_GREETING_KICKOFF = (
 )
 
 
+def build_vox_greeting_kickoff(candidate_name: str) -> str:
+    name = candidate_name or "there"
+    return (
+        f"Begin the screening call now with your opening greeting, addressing the candidate by their name '{name}' (e.g. 'Hi {name}!'). "
+        "Check if it's a good time to talk, then briefly tease the role."
+    )
+
+
 def build_enriched_system_prompt(
     candidate_name: str,
     raw_jd: str,
@@ -230,7 +239,7 @@ def build_enriched_system_prompt(
     Builds the base Priya prompt and injects parsed JD intelligence from
     InterviewContext plus candidate resume (if provided).
     Falls back to the plain base prompt if RecruiterAgent did not succeed.
-    Used by both VoiceConsumer (Gemini/web) and TwilioConsumer (Gemini/phone).
+    Used by TwilioConsumer (Gemini/phone).
     """
     base = build_vox_system_prompt(candidate_name, context.raw_jd or raw_jd)
 

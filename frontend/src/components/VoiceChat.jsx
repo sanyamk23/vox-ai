@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Phone, Mic, Square, Activity, Briefcase, User,
+  Phone, Activity, Briefcase, User,
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
   Copy, TrendingUp, Heart, Package, Code2,
@@ -85,15 +85,6 @@ const jsonTry = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmt     = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
 
-function floatTo16BitPCM(input) {
-  const buf  = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buf);
-  for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-  return buf;
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const WORK_LOCATION_OPTIONS = ['Hybrid', 'Onsite', 'WFH'];
@@ -125,22 +116,12 @@ export default function VoiceChat() {
   const [dragOver,         setDragOver]        = useState(false);
   const [inputMode,        setInputMode]       = useState('prompt');   // 'prompt' | 'structured'
   const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
-  const [bars,             setBars]            = useState(Array(40).fill(0));
-  const [aiSpeaks,         setAiSpeaks]        = useState(false);
   const [connectingType,   setConnectingType]  = useState(null);
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
   const pollRef      = useRef(null);
-  const wsRef        = useRef(null);
-  const audioCtxRef  = useRef(null);
-  const procRef      = useRef(null);
-  const streamRef    = useRef(null);
-  const analyserRef  = useRef(null);
-  const rafRef       = useRef(null);
-  const audioQ       = useRef([]);
-  const playing      = useRef(false);
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
 
@@ -156,108 +137,7 @@ export default function VoiceChat() {
     return () => clearInterval(timerRef.current);
   }, [status]);
 
-  const startWaveform = useCallback(() => {
-    const tick = () => {
-      if (!analyserRef.current) return;
-      const d = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(d);
-      const N = 40, step = Math.max(1, Math.floor(d.length / N));
-      setBars(Array.from({ length: N }, (_, i) => d[i * step] / 255));
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    tick();
-  }, []);
 
-  const playNext = useCallback(async () => {
-    if (!audioQ.current.length) { playing.current = false; setAiSpeaks(false); return; }
-    playing.current = true; setAiSpeaks(true);
-    const buf = audioQ.current.shift();
-    try {
-      const decoded = await audioCtxRef.current.decodeAudioData(buf);
-      const src = audioCtxRef.current.createBufferSource();
-      src.buffer = decoded;
-      src.connect(audioCtxRef.current.destination);
-      src.onended = playNext;
-      src.start(0);
-    } catch { playNext(); }
-  }, []);
-
-  const startMic = useCallback(async () => {
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      alert('Microphone access denied. Please allow microphone access and try again.');
-      cleanup();
-      setStatus('idle');
-      return;
-    }
-    streamRef.current = stream;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    audioCtxRef.current = ctx;
-    const source  = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 128;
-    analyserRef.current = analyser;
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    procRef.current = proc;
-    proc.onaudioprocess = (e) => {
-      const pcm = floatTo16BitPCM(e.inputBuffer.getChannelData(0));
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(pcm);
-    };
-    source.connect(analyser);
-    analyser.connect(proc);
-    proc.connect(ctx.destination);
-    startWaveform();
-  }, [startWaveform]);
-
-  const cleanup = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
-    wsRef.current?.close();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    procRef.current?.disconnect();
-    audioCtxRef.current?.close().catch(() => {});
-    playing.current = false;
-    audioQ.current  = [];
-    setBars(Array(40).fill(0));
-    setAiSpeaks(false);
-    setConnectingType(null);
-  }, []);
-
-  const startWeb = useCallback(async () => {
-    setStatus('connecting'); setConnectingType('web'); setMessages([]); setRecap(null); setElapsed(0);
-    try {
-      const r = await fetch(`${API_BASE}/api/web-session/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, jd, name, resume_text: resumeText }),
-      });
-      const res = await r.json();
-      if (res.status === 'success') {
-        const url = `${WS_BASE}/ws/voice/?token=${res.token}`;
-        const ws = new WebSocket(url);
-        wsRef.current = ws;
-        ws.onopen    = () => { /* wait for ready */ };
-        ws.onmessage = async (e) => {
-          if (typeof e.data === 'string') {
-            const d = jsonTry(e.data);
-            if      (d.type === 'ready')      { setStatus('connected'); setConnectingType(null); await startMic(); }
-            else if (d.type === 'error')      { alert(d.message || 'Session failed'); cleanup(); setStatus('idle'); }
-            else if (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
-            else if (d.type === 'interrupt')  { audioQ.current = []; setAiSpeaks(false); }
-            else if (d.type === 'recap')      { setRecap(d.data); cleanup(); setStatus('ended'); }
-          } else {
-            const ab = await e.data.arrayBuffer();
-            audioQ.current.push(ab);
-            if (!playing.current) playNext();
-          }
-        };
-        ws.onclose = () => { if (wsRef.current) { cleanup(); setStatus(s => s === 'connected' ? 'ended' : s); } };
-        ws.onerror = () => { cleanup(); setStatus('idle'); };
-      } else {
-        alert(res.message); setStatus('idle');
-      }
-    } catch { alert('Backend unreachable.'); setStatus('idle'); }
-  }, [phone, jd, name, resumeText, startMic, cleanup, playNext]);
 
   const handleResumeFile = useCallback(async (file) => {
     if (!file) return;
@@ -693,31 +573,17 @@ export default function VoiceChat() {
           {/* CTA */}
           <div className="space-y-2">
             {isLive ? (
-              <div className="flex gap-2">
-                <div className="flex-1 py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2 text-slate-400 border border-dashed border-slate-200 select-none">
-                  {wsRef.current ? <Mic size={14} className="text-emerald-500" /> : <PhoneCall size={14} className="text-emerald-500" />}
-                  Session in progress…
-                </div>
-                {wsRef.current && (
-                  <button onClick={cleanup} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 rounded-xl flex items-center justify-center transition-colors">
-                    <Square size={14} fill="currentColor" />
-                  </button>
-                )}
+              <div className="py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2 text-slate-400 border border-dashed border-slate-200 select-none">
+                <PhoneCall size={14} className="text-emerald-500" />
+                Session in progress…
               </div>
             ) : (
-              <div className="flex gap-2">
-                <button onClick={startWeb} disabled={isBusy || !name}
-                  className="btn-primary flex-1 py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                  {isBusy && connectingType === 'web' ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-                  {isBusy && connectingType === 'web' ? 'Connecting…' : 'Start Web Call'}
-                </button>
-                <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
-                  title="Trigger Outbound Phone Call"
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 rounded-xl flex items-center justify-center transition-colors">
-                  {isBusy && connectingType === 'phone' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
-                </button>
-              </div>
+              <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91' || !name}
+                className="btn-primary w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                {isBusy && connectingType === 'phone' ? <Loader2 size={14} className="animate-spin" /> : <PhoneCall size={14} />}
+                {isBusy && connectingType === 'phone' ? 'Initiating…' : 'Trigger Outbound Call'}
+              </button>
             )}
             {(isLive || isDone) && (
               <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
@@ -790,22 +656,9 @@ export default function VoiceChat() {
                   <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
                     style={{ background: isLive ? '#22c55e' : '#cbd5e1', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
                   <span className="text-[10px] font-medium text-slate-400">
-                    {isLive ? (wsRef.current ? 'Web Call Active — Microphone On' : 'Call in progress — Priya is speaking with the candidate') : 'No active call'}
+                    {isLive ? 'Call in progress — Priya is speaking with the candidate' : 'No active call'}
                   </span>
                 </div>
-                {wsRef.current && (
-                  <div className="flex items-end justify-between gap-[2px] w-48" style={{ height: 20 }}>
-                    {bars.map((lvl, i) => (
-                      <div key={i} className="flex-1 rounded-full transition-all duration-75"
-                        style={{
-                          height: `${Math.max(2, lvl * 20)}px`,
-                          background: lvl > 0.05
-                            ? `linear-gradient(to top, #6366f1, #a78bfa)`
-                            : 'rgba(99,102,241,0.1)'
-                        }} />
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           </div>

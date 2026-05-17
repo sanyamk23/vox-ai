@@ -4,7 +4,6 @@ from django.urls import path
 
 from chat.views import (
     call_status_webhook,
-    create_web_session,
     initiate_call,
     outgoing_call,
     session_status,
@@ -21,7 +20,7 @@ urlpatterns = [
     path("health/", healthcheck),
     path("admin/", admin.site.urls),
     path("api/call/", initiate_call),
-    path("api/web-session/", create_web_session),
+
     path("api/upload-resume/", upload_resume),
     path("api/session/<str:call_sid>/", session_status),
     path("outgoing-call/", outgoing_call),

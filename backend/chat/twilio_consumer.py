@@ -6,8 +6,9 @@ from urllib.parse import unquote
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.cache import cache
+from asgiref.sync import sync_to_async
 
-from .agent import build_enriched_system_prompt, VOX_GREETING_KICKOFF
+from .agent import build_enriched_system_prompt, VOX_GREETING_KICKOFF, build_vox_greeting_kickoff
 from .agents.manager import AgentManager
 from .gemini_recruiter import (
     GeminiLiveBridge,
@@ -42,7 +43,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             session = {}
             token = params.get("token", "")
             if token:
-                session = cache.get(f"vox:{token}") or {}
+                session = await sync_to_async(cache.get)(f"vox:{token}") or {}
                 if not session:
                     logger.warning("[Twilio] Cache miss for token=%s — falling back to query params / defaults", token)
 
@@ -112,7 +113,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 )
                 print(f"[Twilio] Reconnect greeting: {reconnect}")
             elif jd:
-                greeting_kickoff = VOX_GREETING_KICKOFF
+                greeting_kickoff = build_vox_greeting_kickoff(name)
             else:
                 greeting_kickoff = SARAH_GREETING_KICKOFF
 
@@ -160,7 +161,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 )
             else:
                 # Natural close after real screening — clear retry state and done
-                CallRetryManager.clear(self._phone)
+                await sync_to_async(CallRetryManager.clear)(self._phone)
                 return
 
         if not self._phone:
@@ -169,11 +170,11 @@ class TwilioConsumer(AsyncWebsocketConsumer):
 
         if self._retry_num >= CallRetryManager.MAX_RETRIES:
             print(f"[Retry] Max retries reached for {self._phone} — no further callbacks")
-            CallRetryManager.clear(self._phone)
+            await sync_to_async(CallRetryManager.clear)(self._phone)
             return
 
         # Save drop context (accumulates transcript across retries)
-        retry_num = CallRetryManager.record_drop(
+        retry_num = await sync_to_async(CallRetryManager.record_drop)(
             phone=self._phone,
             name=self._name,
             jd=self._jd,
@@ -193,7 +194,7 @@ class TwilioConsumer(AsyncWebsocketConsumer):
         delay_label = "immediately (~5s)" if retry_num == 1 else "in 5 minutes"
         print(f"[Retry] Scheduling callback #{retry_num} to {self._phone} {delay_label}")
 
-        state = CallRetryManager.load(self._phone)
+        state = await sync_to_async(CallRetryManager.load)(self._phone)
         CallRetryManager.schedule_callback(
             phone=self._phone,
             name=self._name,
