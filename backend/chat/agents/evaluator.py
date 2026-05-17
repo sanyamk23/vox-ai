@@ -55,7 +55,12 @@ Return ONLY valid JSON — no markdown fences, no extra text:
   "hr_flags": ["<specific red flags — empty array if none>"],
   "vibe_check": "<one honest sentence about the candidate's energy and fit>",
   "recommended_next_step": "<specific action for the hiring team>",
-  "reasoning": "<2-3 sentences explaining the score and outcome decision>"
+  "reasoning": "<2-3 sentences explaining the score and outcome decision>",
+  "engagement_level": "<high|medium|low>",
+  "tone_signals": ["<1-4 specific observable tone or behaviour signals, e.g. 'gave detailed examples unprompted', 'answered in one-liners throughout', 'asked follow-up questions about the team'>"],
+  "checkpoints_completed": ["<list only the checkpoint names that were actually covered: greeting, recruiter-intro, candidate-intro, technical-screening, work-mode, compensation, role-alignment, availability>"],
+  "interest_indicators": ["<1-4 specific things that show genuine interest, e.g. 'asked about team size', 'mentioned the tech stack unprompted', 'confirmed availability eagerly'>"],
+  "concern_indicators": ["<1-4 specific signals of hesitation or risk, e.g. 'gave evasive answers on salary', 'said they have multiple active offers', 'seemed disengaged during technical questions'>"]
 }
 
 Evaluation rules:
@@ -64,6 +69,9 @@ Evaluation rules:
 - technical_fit.confidence must be LOW (<0.4) for short or surface-level calls
 - overall_confidence < 0.4 means insufficient data — add a flag in hr_flags
 - hr_flags must include: salary mismatch vs JD range, notice > 90 days, strong competing offers, evasive answers
+- engagement_level: "high" = detailed, energetic, asks questions; "low" = one-liners, flat, minimal effort; "medium" = everything between
+- checkpoints_completed: only list checkpoints that were explicitly discussed in the transcript
+- interest_indicators and concern_indicators: leave as empty arrays if there are no clear signals
 - Outcome decision guide:
     technical_fit.score < 4                          → NOT_INTERESTED
     logistics mismatch (salary, location, notice)    → CALLBACK_REQUESTED
@@ -122,11 +130,15 @@ class EvaluationAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
+<<<<<<< Updated upstream
                 # gemini-2.5-flash thinking burns through max_output_tokens;
                 # disable for structured-output and give headroom for full report.
                 max_output_tokens=3000,
                 response_mime_type="application/json",
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
+=======
+                max_output_tokens=1400,
+>>>>>>> Stashed changes
             ),
         )
 
@@ -219,6 +231,9 @@ class EvaluationAgent(BaseAgent):
         if outcome not in _VALID_OUTCOMES:
             outcome = "CONFUSED"
 
+        raw_engagement = data.get("engagement_level", "medium")
+        engagement = raw_engagement if raw_engagement in ("high", "medium", "low") else "medium"
+
         return EvalReport(
             intent_score=int(data.get("intent_score", 5)),
             call_outcome=outcome,
@@ -238,6 +253,11 @@ class EvaluationAgent(BaseAgent):
             vibe_check=data.get("vibe_check", ""),
             recommended_next_step=data.get("recommended_next_step", ""),
             reasoning=data.get("reasoning", ""),
+            engagement_level=engagement,
+            tone_signals=data.get("tone_signals") or [],
+            checkpoints_completed=data.get("checkpoints_completed") or [],
+            interest_indicators=data.get("interest_indicators") or [],
+            concern_indicators=data.get("concern_indicators") or [],
             raw_data=data,
             evaluator_status="completed",
         )

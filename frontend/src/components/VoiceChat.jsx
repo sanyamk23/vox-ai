@@ -920,6 +920,28 @@ function Chip({ color = 'slate', children }) {
   );
 }
 
+// ── Engagement config ───────────────────────────────────────────────────────
+const ENGAGEMENT = {
+  high:   { label: 'High',   bg: 'rgba(5,150,105,0.08)',  bd: 'rgba(5,150,105,0.22)',  tx: '#065f46', dot: '#059669' },
+  medium: { label: 'Medium', bg: 'rgba(245,158,11,0.08)', bd: 'rgba(245,158,11,0.22)', tx: '#78350f', dot: '#d97706' },
+  low:    { label: 'Low',    bg: 'rgba(239,68,68,0.08)',  bd: 'rgba(239,68,68,0.22)',  tx: '#7f1d1d', dot: '#dc2626' },
+};
+
+const ALL_CHECKPOINTS = [
+  'greeting', 'recruiter-intro', 'candidate-intro', 'technical-screening',
+  'work-mode', 'compensation', 'role-alignment', 'availability',
+];
+const CP_LABELS = {
+  'greeting':            'Greeting',
+  'recruiter-intro':     'Intro',
+  'candidate-intro':     'Background',
+  'technical-screening': 'Technical',
+  'work-mode':           'Work Mode',
+  'compensation':        'Compensation',
+  'role-alignment':      'Role Fit',
+  'availability':        'Notice / Joining',
+};
+
 // ── Compatibility config ────────────────────────────────────────────────────
 const COMPAT = {
   green:  { dot: '🟢', label: 'Strong Match',    bg: 'rgba(5,150,105,0.07)',  bd: 'rgba(5,150,105,0.22)',  tx: '#065f46', hd: '#059669' },
@@ -1201,6 +1223,97 @@ function Scorecard({ report, name }) {
           </ul>
         </section>
       )}
+
+      {/* ── Engagement Analysis ── */}
+      {(() => {
+        const level  = report.engagement_level;
+        const eng    = level ? (ENGAGEMENT[level] || ENGAGEMENT.medium) : null;
+        const tones  = report.tone_signals || [];
+        const cps    = report.checkpoints_completed || [];
+        const pos    = report.interest_indicators || [];
+        const neg    = report.concern_indicators || [];
+        if (!eng && !tones.length && !cps.length && !pos.length && !neg.length) return null;
+        return (
+          <section className="glass rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <Label icon={<Activity size={12} />}>Engagement Analysis</Label>
+              {eng && (
+                <span className="flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg border"
+                  style={{ background: eng.bg, borderColor: eng.bd, color: eng.tx }}>
+                  <span className="w-[6px] h-[6px] rounded-full flex-shrink-0" style={{ background: eng.dot }} />
+                  {eng.label} Engagement
+                </span>
+              )}
+            </div>
+
+            {/* Checkpoints */}
+            {cps.length > 0 && (
+              <div className="mb-3">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Checkpoints Covered ({cps.length}/{ALL_CHECKPOINTS.length})
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {ALL_CHECKPOINTS.map(cp => {
+                    const done = cps.includes(cp);
+                    return (
+                      <span key={cp} className="text-[9px] font-semibold px-2 py-0.5 rounded-md"
+                        style={done
+                          ? { background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.25)', color: '#4f46e5' }
+                          : { background: 'rgba(15,23,42,0.04)', border: '1px solid rgba(15,23,42,0.08)', color: '#cbd5e1' }}>
+                        {done ? '✓ ' : ''}{CP_LABELS[cp]}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Interest + Concern columns */}
+            {(pos.length > 0 || neg.length > 0) && (
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {pos.length > 0 && (
+                  <div className="rounded-xl p-2.5" style={{ background: 'rgba(5,150,105,0.07)', border: '1px solid rgba(5,150,105,0.18)' }}>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700 mb-1.5">Interest</p>
+                    <ul className="space-y-1">
+                      {pos.slice(0, 4).map((s, i) => (
+                        <li key={i} className="text-[10px] text-emerald-800 leading-snug flex gap-1">
+                          <span className="flex-shrink-0">+</span>{s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {neg.length > 0 && (
+                  <div className="rounded-xl p-2.5" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.18)' }}>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-amber-700 mb-1.5">Concerns</p>
+                    <ul className="space-y-1">
+                      {neg.slice(0, 4).map((s, i) => (
+                        <li key={i} className="text-[10px] text-amber-800 leading-snug flex gap-1">
+                          <span className="flex-shrink-0">!</span>{s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tone signals */}
+            {tones.length > 0 && (
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Tone Signals</p>
+                <ul className="space-y-1">
+                  {tones.slice(0, 4).map((t, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-500 leading-snug">
+                      <span className="text-indigo-400 flex-shrink-0 mt-[1px]">·</span>{t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* ── Recommended Action ── */}
       {report.recommended_next_step && (

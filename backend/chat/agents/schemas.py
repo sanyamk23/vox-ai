@@ -164,6 +164,13 @@ class EvalReport:
     recommended_next_step: str = ""
     reasoning: str = ""                     # why this score + outcome
 
+    # Engagement & tone analysis
+    engagement_level: str = "medium"                           # high / medium / low
+    tone_signals: list[str] = field(default_factory=list)      # observed tone/behaviour signals
+    checkpoints_completed: list[str] = field(default_factory=list)  # which of the 8 CPs were covered
+    interest_indicators: list[str] = field(default_factory=list)    # positive signals from candidate
+    concern_indicators: list[str] = field(default_factory=list)     # hesitation / red flags from tone
+
     # Internal
     raw_data: dict = field(default_factory=dict)
     evaluator_status: str = "pending"       # pending / completed / fallback_used
@@ -188,6 +195,11 @@ class EvalReport:
             "vibe_check": self.vibe_check,
             "recommended_next_step": self.recommended_next_step,
             "reasoning": self.reasoning,
+            "engagement_level": self.engagement_level,
+            "tone_signals": self.tone_signals,
+            "checkpoints_completed": self.checkpoints_completed,
+            "interest_indicators": self.interest_indicators,
+            "concern_indicators": self.concern_indicators,
             "evaluator_status": self.evaluator_status,
             **{k: v for k, v in self.raw_data.items()
                if k not in ("intent_score", "call_outcome")},
