@@ -335,6 +335,8 @@ class GeminiLiveBridge:
     async def run(self) -> None:
         try:
             await self._run_inner()
+        except Exception as exc:
+            print(f"[Gemini] Session failed: {exc}")
         finally:
             await self._finalize()
 
@@ -351,8 +353,6 @@ class GeminiLiveBridge:
                 parts=[types.Part.from_text(text=self._system_prompt)]
             ),
             temperature=0.7,
-            # Adapt prosody and emotional tone for a more natural, human-sounding voice
-            enable_affective_dialog=True,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=GEMINI_VOICE)
