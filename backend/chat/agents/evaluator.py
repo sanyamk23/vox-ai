@@ -130,15 +130,11 @@ class EvaluationAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-<<<<<<< Updated upstream
                 # gemini-2.5-flash thinking burns through max_output_tokens;
                 # disable for structured-output and give headroom for full report.
                 max_output_tokens=3000,
                 response_mime_type="application/json",
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
-=======
-                max_output_tokens=1400,
->>>>>>> Stashed changes
             ),
         )
 
