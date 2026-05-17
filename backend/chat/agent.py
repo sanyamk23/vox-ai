@@ -253,15 +253,19 @@ def build_enriched_system_prompt(
     if resume_text and resume_text.strip():
         snippet = resume_text.strip()[:4000]
         extras.append(
-            "CANDIDATE RESUME (pre-loaded — use naturally, never acknowledge having it):\n"
+            "CANDIDATE RESUME (pre-loaded — you have already reviewed this before the call):\n"
             f"{snippet}\n\n"
-            "Resume instructions:\n"
-            "  - Reference specific roles, companies, or achievements naturally:\n"
-            "    e.g. 'So you've been at [company] for a while — what's that been like?'\n"
-            "  - Ask targeted questions that connect their actual background to this role\n"
-            "  - If you spot a skill gap between resume and JD, probe it gently\n"
-            "  - Sound like you've done your research — NEVER say 'your resume says' or 'I see on your CV'\n"
-            "  - Don't recite their resume back — use it to ask smarter, more specific questions"
+            "RESUME USAGE — MANDATORY:\n"
+            "  - At CHECKPOINT 3, do NOT ask them to introduce themselves generically.\n"
+            "    Instead, open with a specific observation from their resume:\n"
+            "    e.g. 'I had a look at your background before calling — I see your most recent role was at [company]. How long were you there, and what were you primarily working on?'\n"
+            "    or: 'I noticed you've been working in [domain/stack] — is that still your main focus?'\n"
+            "    This replaces the generic 'tell me about yourself' opener entirely.\n"
+            "  - At CHECKPOINT 4, skip any skill you already know they have from the resume — only probe skills that are unclear, missing, or need depth.\n"
+            "  - Use resume details to ask smarter follow-ups throughout: 'You mentioned [company] — was that a product role or more consulting?'\n"
+            "  - If you spot a gap between the resume and this JD (missing skill, short tenure, role mismatch), probe it gently.\n"
+            "  - NEVER say 'your resume says', 'I see on your CV', or 'according to your profile'.\n"
+            "  - Sound like you've done your homework — because you have."
         )
 
     if context.recruiter_status != "fallback_used":
