@@ -401,9 +401,15 @@ class GeminiLiveBridge:
                 await _send_greeting()
                 if self._on_ready:
                     await self._on_ready()
+            else:
+                # Twilio: kick off greeting immediately so Gemini generates audio
+                # while we wait for the "start" event — audio is buffered and
+                # flushed the instant the stream opens, eliminating the silent gap
+                await _send_greeting()
+                print("[Gemini] Greeting pre-sent — audio will buffer until Twilio stream starts.")
 
             async def inbound_to_gemini() -> None:
-                nonlocal inbound_resample_state
+                nonlocal inbound_resample_state, outbound_mulaw_buffer
                 inbound_frame_count = 0
                 while not self._closed.is_set():
                     if self._mode == "web":
@@ -429,7 +435,24 @@ class GeminiLiveBridge:
                             self._call_sid = start.get("callSid", "")
                             self._stream_start_time = time.time()
                             print(f"[Twilio] Stream ID: {self.stream_sid}")
-                            await _send_greeting()
+                            # Greeting was already sent at session open — flush any
+                            # audio Gemini generated before the stream was ready
+                            if outbound_mulaw_buffer:
+                                buf, outbound_mulaw_buffer = outbound_mulaw_buffer, b""
+                                while len(buf) >= 160:
+                                    await self._send_twilio_json({
+                                        "event": "media",
+                                        "streamSid": self.stream_sid,
+                                        "media": {"payload": base64.b64encode(buf[:160]).decode("utf-8")},
+                                    })
+                                    buf = buf[160:]
+                                if buf:
+                                    await self._send_twilio_json({
+                                        "event": "media",
+                                        "streamSid": self.stream_sid,
+                                        "media": {"payload": base64.b64encode(buf).decode("utf-8")},
+                                    })
+                                print("[Twilio] Flushed pre-stream greeting audio — no gap on answer.")
                         elif event == "media":
                             payload = data.get("media", {}).get("payload", "")
                             if not payload:
@@ -473,11 +496,7 @@ class GeminiLiveBridge:
                                 if self._mode == "web" and self._send_web_audio:
                                     wav = _pcm_to_wav(response.data, WEB_OUTPUT_RATE)
                                     await self._send_web_audio(wav)
-                                elif (
-                                    self._mode == "twilio"
-                                    and self.stream_sid
-                                    and self._send_twilio_json
-                                ):
+                                elif self._mode == "twilio" and self._send_twilio_json:
                                     pcm_8k, outbound_resample_state = audioop.ratecv(
                                         response.data,
                                         2,
@@ -487,19 +506,21 @@ class GeminiLiveBridge:
                                         outbound_resample_state,
                                     )
                                     outbound_mulaw_buffer += audioop.lin2ulaw(pcm_8k, 2)
-                                    # Send in exactly 20ms (160-byte) chunks — Twilio's
-                                    # expected packet size; prevents choppy/robotic audio
-                                    while len(outbound_mulaw_buffer) >= 160:
-                                        await self._send_twilio_json({
-                                            "event": "media",
-                                            "streamSid": self.stream_sid,
-                                            "media": {
-                                                "payload": base64.b64encode(
-                                                    outbound_mulaw_buffer[:160]
-                                                ).decode("utf-8")
-                                            },
-                                        })
-                                        outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
+                                    # Only forward once the Twilio stream is open.
+                                    # Audio generated before "start" accumulates here
+                                    # and is flushed in inbound_to_gemini when "start" fires.
+                                    if self.stream_sid:
+                                        while len(outbound_mulaw_buffer) >= 160:
+                                            await self._send_twilio_json({
+                                                "event": "media",
+                                                "streamSid": self.stream_sid,
+                                                "media": {
+                                                    "payload": base64.b64encode(
+                                                        outbound_mulaw_buffer[:160]
+                                                    ).decode("utf-8")
+                                                },
+                                            })
+                                            outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
 
                             if response.server_content:
                                 sc = response.server_content
