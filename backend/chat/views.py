@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -6,6 +7,7 @@ import re
 import urllib.parse
 import uuid
 
+from asgiref.sync import sync_to_async
 from django.core.cache import cache
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -198,7 +200,7 @@ def _place_call(
         "prior_notes":      prior_notes or {},
     }, timeout=3600)
 
-    return {"status": "Call initiated", "call_sid": call.sid, "stream_url": stream_url}
+    return {"status": "Call initiated", "call_sid": call.sid, "stream_url": stream_url, "token": token}
 
 
 @csrf_exempt
@@ -264,8 +266,24 @@ def outgoing_call(request):
         )
 
 
+async def _precache_interview_context(
+    token: str, jd: str, name: str, recruiter_inputs: dict | None
+) -> None:
+    """Parse JD while the phone rings and cache the result. Fire-and-forget."""
+    from .agents.manager import AgentManager
+    try:
+        manager = AgentManager(session_id=f"precache:{token}")
+        context = await manager.prepare_session(
+            jd=jd, candidate_name=name, recruiter_inputs=recruiter_inputs
+        )
+        await sync_to_async(cache.set)(f"vox:context:{token}", context.to_dict(), timeout=3600)
+        logger.info("[Precache] JD context ready token=%s status=%s", token, context.recruiter_status)
+    except Exception as exc:
+        logger.warning("[Precache] Failed for token=%s: %s", token, exc)
+
+
 @csrf_exempt
-def initiate_call(request):
+async def initiate_call(request):
     """UI outbound call — POST /api/call/ with {phone, jd, name}."""
     if request.method != "POST":
         return JsonResponse(
@@ -337,7 +355,7 @@ def initiate_call(request):
         print(
             f"[Call] Twilio → Gemini Live | To: {to_number} | Candidate: {name} | Resume: {bool(resume_text)}"
         )
-        result = _place_call(
+        result = await sync_to_async(_place_call)(
             to_number=to_number,
             from_number=from_number,
             host_url=public_url,
@@ -346,6 +364,12 @@ def initiate_call(request):
             resume_text=resume_text,
             recruiter_inputs=recruiter_inputs,
         )
+
+        # Pre-parse JD while phone rings — result will be in cache before candidate answers
+        asyncio.create_task(
+            _precache_interview_context(result["token"], jd, name, recruiter_inputs)
+        )
+
         return JsonResponse({"status": "success", "call_sid": result["call_sid"]})
 
     except Exception as e:

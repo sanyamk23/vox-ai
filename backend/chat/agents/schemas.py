@@ -68,6 +68,30 @@ class InterviewContext:
             "recruiter_status": self.recruiter_status,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "InterviewContext":
+        return cls(
+            job_title=data.get("job_title", "Software Engineer"),
+            company_name=data.get("company_name", ""),
+            required_skills=data.get("required_skills", []),
+            nice_to_have_skills=data.get("nice_to_have_skills", []),
+            experience_level=data.get("experience_level", "mid"),
+            domain=data.get("domain", ""),
+            company_overview=data.get("company_overview", ""),
+            team_details=data.get("team_details", ""),
+            company_location=data.get("company_location", ""),
+            years_of_experience=data.get("years_of_experience", ""),
+            ctc_range=data.get("ctc_range", ""),
+            required_joining_timeline=data.get("required_joining_timeline", ""),
+            work_location_type=data.get("work_location_type", ""),
+            custom_questions=data.get("custom_questions", []),
+            phase_weights=data.get("phase_weights", {}),
+            company_context=data.get("company_context", {}),
+            salary_range=data.get("salary_range"),
+            raw_jd=data.get("raw_jd", ""),
+            recruiter_status=data.get("recruiter_status", "completed"),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Post-call: produced by SummaryAgent

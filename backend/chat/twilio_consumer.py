@@ -10,6 +10,7 @@ from asgiref.sync import sync_to_async
 
 from .agent import build_enriched_system_prompt, VOX_GREETING_KICKOFF, build_vox_greeting_kickoff
 from .agents.manager import AgentManager
+from .agents.schemas import InterviewContext
 from .gemini_recruiter import (
     GeminiLiveBridge,
     RECRUITER_PROMPT,
@@ -80,11 +81,21 @@ class TwilioConsumer(AsyncWebsocketConsumer):
                 f"[Twilio] attempt={retry_num + 1}/3 | phone={phone} | name={name} | resume={bool(resume_text)}"
             )
 
-            # Pre-call: parse JD → InterviewContext (guaranteed to return)
-            manager = AgentManager(session_id=self.channel_name)
-            context = await manager.prepare_session(
-                jd=jd, candidate_name=name, recruiter_inputs=recruiter_inputs
-            )
+            # Use pre-cached JD context parsed while phone was ringing (fast path)
+            context: InterviewContext | None = None
+            if token:
+                cached = await sync_to_async(cache.get)(f"vox:context:{token}")
+                if cached:
+                    context = InterviewContext.from_dict(cached)
+                    logger.info("[Twilio] Pre-cached context loaded status=%s", context.recruiter_status)
+
+            if context is None:
+                # Fallback: parse JD now (phone answered before pre-cache finished)
+                manager = AgentManager(session_id=self.channel_name)
+                context = await manager.prepare_session(
+                    jd=jd, candidate_name=name, recruiter_inputs=recruiter_inputs
+                )
+
             print(
                 f"[Twilio] Recruiter: {context.recruiter_status} | "
                 f"skills={context.required_skills[:3]}"
