@@ -25,6 +25,9 @@ frontend/node_modules/
 .docker_data/
 postgres_data/
 
+# Nested working tree (separate git repo)
+vox-ai/
+
 # Logs
 *.log
 npm-debug.log*

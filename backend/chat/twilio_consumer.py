@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from urllib.parse import unquote
 
@@ -14,6 +15,10 @@ from .gemini_recruiter import (
     SARAH_GREETING_KICKOFF,
 )
 from .retry_manager import CallRetryManager, RETRY_1_DELAY, RETRY_2_DELAY
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_JD = "Software Engineer at a high-growth startup."
 
 
 class TwilioConsumer(AsyncWebsocketConsumer):
@@ -39,12 +44,19 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             if token:
                 session = cache.get(f"vox:{token}") or {}
                 if not session:
-                    print(f"[Twilio] No session for token={token}")
+                    logger.warning("[Twilio] Cache miss for token=%s — falling back to query params / defaults", token)
 
             name        = session.get("name")        or params.get("name")        or "Candidate"
             jd          = session.get("jd")          or params.get("jd")          or ""
             phone       = session.get("phone")       or params.get("phone")       or ""
             resume_text = session.get("resume_text") or params.get("resume_text") or ""
+
+            if not jd or len(jd.strip()) < 20:
+                logger.warning(
+                    "[Twilio] No usable JD on session (cache=%s, params=%s) — using default JD",
+                    bool(session.get("jd")), bool(params.get("jd")),
+                )
+                jd = _DEFAULT_JD
 
             # Retry context (populated on call 2 & 3)
             retry_num        = int(session.get("retry_num", 0))

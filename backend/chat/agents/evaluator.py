@@ -122,15 +122,16 @@ class EvaluationAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=1000,
+                # gemini-2.5-flash thinking burns through max_output_tokens;
+                # disable for structured-output and give headroom for full report.
+                max_output_tokens=3000,
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
         raw = (resp.text or "").strip()
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
-
-        data = json.loads(raw)
+        data = _parse_llm_json(raw)
         report = self._parse_report(data)
         logger.info(
             "[Evaluator] Score=%d outcome=%s confidence=%.2f",
@@ -245,6 +246,79 @@ class EvaluationAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 # Utility parsers
 # ---------------------------------------------------------------------------
+
+def _parse_llm_json(raw: str) -> dict:
+    """
+    Parse JSON from an LLM response, tolerating common malformations:
+    markdown fences, trailing commas, leading prose, truncated tails.
+    Raises json.JSONDecodeError if no recoverable JSON object is found.
+    """
+    text = (raw or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract the outermost {...} block (handles preamble prose)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        snippet = text[start : end + 1]
+        # Strip trailing commas before ] or }
+        repaired = re.sub(r",(\s*[}\]])", r"\1", snippet)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+    # Truncated response — try to salvage by closing any open string/braces
+    if start != -1:
+        salvage = _close_truncated_json(text[start:])
+        if salvage is not None:
+            try:
+                return json.loads(salvage)
+            except json.JSONDecodeError:
+                pass
+
+    logger.error("[parse_llm_json] Could not parse — raw head: %r", text[:400])
+    return json.loads(text)
+
+
+def _close_truncated_json(text: str) -> Optional[str]:
+    """Best-effort: close unterminated strings/braces to recover a truncated JSON object."""
+    in_str = False
+    escape = False
+    stack: list[str] = []
+    last_complete = -1
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            if not stack:
+                last_complete = i
+    # If we have a complete top-level object earlier, use it
+    if last_complete != -1:
+        return text[: last_complete + 1]
+    # Otherwise close what's open
+    tail = '"' if in_str else ""
+    return text + tail + "".join(reversed(stack)) if stack or in_str else None
+
 
 def _safe_float(val) -> Optional[float]:
     try:

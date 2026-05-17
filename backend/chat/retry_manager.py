@@ -43,6 +43,10 @@ _MAX_PRIOR_LINES   = 30               # max transcript lines stored between retr
 RETRY_1_DELAY  =  10.0   # seconds — brief pause before immediate callback
 RETRY_2_DELAY  = 300.0   # seconds — 5 minutes
 
+# Strong refs to scheduled retry tasks so the event loop doesn't GC them
+# mid-sleep (see https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task).
+_PENDING_RETRY_TASKS: set[asyncio.Task] = set()
+
 # Signals in the last AI turns that mean the call closed naturally (not a drop)
 _CLOSE_SIGNALS = {
     "talk to you soon", "reach out", "great talking", "was great", "let you go",
@@ -231,7 +235,7 @@ class CallRetryManager:
         Uses asyncio.create_task so it never blocks the caller.
         The Twilio SDK call runs in a thread executor (it is synchronous).
         """
-        asyncio.create_task(
+        task = asyncio.create_task(
             cls._delayed_call(
                 phone=phone, name=name, jd=jd,
                 transcript=transcript, notes=notes,
@@ -241,6 +245,8 @@ class CallRetryManager:
             ),
             name=f"retry-{retry_num}-{phone}",
         )
+        _PENDING_RETRY_TASKS.add(task)
+        task.add_done_callback(_PENDING_RETRY_TASKS.discard)
         logger.info(
             "[Retry] Callback #%d scheduled for %s in %.0fs",
             retry_num, phone, delay_seconds,

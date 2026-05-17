@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
-import re
 
 import aiohttp
 from google import genai
@@ -98,15 +95,17 @@ class RecruiterAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=1000,
+                # gemini-2.5-flash has "thinking" enabled by default which eats
+                # the output-token budget before producing real JSON. Disable it
+                # for structured-output calls and give plenty of headroom.
+                max_output_tokens=2048,
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
-        raw = (resp.text or "").strip()
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
-
-        data = json.loads(raw)
+        from .evaluator import _parse_llm_json
+        data = _parse_llm_json(resp.text or "")
 
         ctx = InterviewContext(
             job_title=data.get("job_title", "Software Engineer"),

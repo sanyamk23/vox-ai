@@ -17,9 +17,23 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         params = self._parse_query()
         await self.accept()
 
-        self._name = params.get("name") or "there"
-        self._jd = params.get("jd") or "Software Engineer at a high-growth startup."
-        self._phone = params.get("phone") or ""
+        token = params.get("token", "")
+        session = {}
+        if token:
+            from django.core.cache import cache
+
+            session = cache.get(f"vox_web:{token}") or {}
+
+        self._name = session.get("name") or params.get("name") or "there"
+        self._jd = (
+            session.get("jd")
+            or params.get("jd")
+            or "Software Engineer at a high-growth startup."
+        )
+        self._phone = session.get("phone") or params.get("phone") or ""
+        self._resume_text = (
+            session.get("resume_text") or params.get("resume_text") or ""
+        )
 
         # Pre-call: parse JD → InterviewContext (guaranteed to return even on failure)
         manager = AgentManager(session_id=self.channel_name)
@@ -31,7 +45,9 @@ class VoiceConsumer(AsyncWebsocketConsumer):
 
         self.bridge = GeminiLiveBridge(
             mode="web",
-            system_prompt=build_enriched_system_prompt(self._name, self._jd, context),
+            system_prompt=build_enriched_system_prompt(
+                self._name, self._jd, context, resume_text=self._resume_text
+            ),
             on_send_web_audio=self.send_audio,
             on_transcript=self.send_transcript,
             on_interrupt=self.send_interrupt,
@@ -51,7 +67,9 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             print(f"[WebSocket] Gemini bridge failed: {e}")
             try:
-                await self.send(text_data=json.dumps({"type": "error", "message": str(e)}))
+                await self.send(
+                    text_data=json.dumps({"type": "error", "message": str(e)})
+                )
             except Exception:
                 pass
             await self.close()
@@ -101,12 +119,16 @@ class VoiceConsumer(AsyncWebsocketConsumer):
         await self.send(bytes_data=chunk)
 
     async def send_transcript(self, role: str, text: str):
-        await self.send(text_data=json.dumps({"type": "transcript", "role": role, "text": text}))
+        await self.send(
+            text_data=json.dumps({"type": "transcript", "role": role, "text": text})
+        )
 
     async def send_interrupt(self):
         await self.send(text_data=json.dumps({"type": "interrupt"}))
 
     async def send_recap(self, score, reason):
-        await self.send(text_data=json.dumps({"type": "recap", "data": {"score": score, "reason": reason}}))
-
-
+        await self.send(
+            text_data=json.dumps(
+                {"type": "recap", "data": {"score": score, "reason": reason}}
+            )
+        )

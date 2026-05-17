@@ -20,12 +20,14 @@ _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB
 
 def _extract_pdf_text(file_obj) -> str:
     from pypdf import PdfReader
+
     reader = PdfReader(io.BytesIO(file_obj.read()))
     return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
 
 
 def _extract_docx_text(file_obj) -> str:
     from docx import Document
+
     doc = Document(io.BytesIO(file_obj.read()))
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip()).strip()
 
@@ -36,9 +38,13 @@ def upload_resume(request):
     """Parse a candidate resume (PDF or DOCX) and return extracted text."""
     file = request.FILES.get("resume")
     if not file:
-        return JsonResponse({"status": "error", "message": "No file provided"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "No file provided"}, status=400
+        )
     if file.size > _MAX_RESUME_BYTES:
-        return JsonResponse({"status": "error", "message": "File too large (max 5 MB)"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "File too large (max 5 MB)"}, status=400
+        )
 
     fname = file.name.lower()
     try:
@@ -54,19 +60,48 @@ def upload_resume(request):
     except Exception as e:
         print(f"[Resume] Parse error: {e}")
         return JsonResponse(
-            {"status": "error", "message": "Could not parse file — try re-saving as PDF"},
+            {
+                "status": "error",
+                "message": "Could not parse file — try re-saving as PDF",
+            },
             status=400,
         )
 
     if not text.strip():
         return JsonResponse(
-            {"status": "error", "message": "No text found — file may be a scanned image"},
+            {
+                "status": "error",
+                "message": "No text found — file may be a scanned image",
+            },
             status=400,
         )
 
     capped = text[:_MAX_RESUME_LENGTH]
     print(f"[Resume] Extracted {len(text)} chars → capped at {len(capped)}")
     return JsonResponse({"status": "success", "text": capped, "chars": len(capped)})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def create_web_session(request):
+    """UI web session — POST /api/web-session/ with {jd, name, phone, resume_text}."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse(
+            {"status": "error", "message": "Invalid JSON body"}, status=400
+        )
+
+    jd = _sanitize(data.get("jd") or "Software Engineer role", _MAX_JD_LENGTH)
+    name = _sanitize(data.get("name") or "Candidate", _MAX_NAME_LENGTH)
+    phone = _sanitize(data.get("phone") or "", 20)
+    resume_text = _sanitize(data.get("resume_text") or "", _MAX_RESUME_LENGTH)
+
+    token = str(uuid.uuid4())
+    session_data = {"jd": jd, "name": name, "phone": phone, "resume_text": resume_text}
+    cache.set(f"vox_web:{token}", session_data, timeout=3600)
+
+    return JsonResponse({"status": "success", "token": token})
 
 
 def _validate_e164(number: str) -> bool:
@@ -122,7 +157,12 @@ def _place_call(
     clean_host = _clean_host(host_url)
     token = str(uuid.uuid4())
 
-    session_data: dict = {"jd": jd, "name": name, "phone": to_number, "retry_num": retry_num}
+    session_data: dict = {
+        "jd": jd,
+        "name": name,
+        "phone": to_number,
+        "retry_num": retry_num,
+    }
     if resume_text:
         session_data["resume_text"] = resume_text
     if prior_transcript:
@@ -163,29 +203,40 @@ def outgoing_call(request):
         body = {}
 
     to_number = (
-        request.GET.get("to_number")
-        or body.get("to_number")
-        or body.get("phone")
-        or ""
+        request.GET.get("to_number") or body.get("to_number") or body.get("phone") or ""
     ).strip()
     from_number = (
         request.GET.get("from_number")
         or body.get("from_number")
         or os.getenv("TWILIO_PHONE_NUMBER", "")
     ).strip()
-    host_url = (request.GET.get("host_url") or body.get("host_url") or os.getenv("PUBLIC_URL", "")).strip()
+    host_url = (
+        request.GET.get("host_url")
+        or body.get("host_url")
+        or os.getenv("PUBLIC_URL", "")
+    ).strip()
 
     if not to_number:
-        return JsonResponse({"status": "error", "message": "to_number is required"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "to_number is required"}, status=400
+        )
     if not _validate_e164(to_number):
         return JsonResponse(
-            {"status": "error", "message": "to_number must be E.164 (e.g. +919876543210)"},
+            {
+                "status": "error",
+                "message": "to_number must be E.164 (e.g. +919876543210)",
+            },
             status=400,
         )
     if not from_number:
-        return JsonResponse({"status": "error", "message": "from_number is required"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "from_number is required"}, status=400
+        )
     if not host_url or "ngrok_url_here" in host_url:
-        return JsonResponse({"status": "error", "message": "host_url / PUBLIC_URL not configured"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "host_url / PUBLIC_URL not configured"},
+            status=400,
+        )
 
     try:
         result = _place_call(
@@ -196,19 +247,25 @@ def outgoing_call(request):
         return JsonResponse(result)
     except Exception as e:
         print(f"[Call-Error] {e}")
-        return JsonResponse({"status": "error", "message": "Failed to initiate call"}, status=500)
+        return JsonResponse(
+            {"status": "error", "message": "Failed to initiate call"}, status=500
+        )
 
 
 @csrf_exempt
 def initiate_call(request):
     """UI outbound call — POST /api/call/ with {phone, jd, name}."""
     if request.method != "POST":
-        return JsonResponse({"status": "error", "message": "Only POST allowed"}, status=405)
+        return JsonResponse(
+            {"status": "error", "message": "Only POST allowed"}, status=405
+        )
 
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        return JsonResponse({"status": "error", "message": "Invalid JSON body"}, status=400)
+        return JsonResponse(
+            {"status": "error", "message": "Invalid JSON body"}, status=400
+        )
 
     try:
         to_number = (data.get("phone") or data.get("to_number") or "").strip()
@@ -216,10 +273,15 @@ def initiate_call(request):
         raw_name = data.get("name") or "Candidate"
 
         if not to_number:
-            return JsonResponse({"status": "error", "message": "phone is required"}, status=400)
+            return JsonResponse(
+                {"status": "error", "message": "phone is required"}, status=400
+            )
         if not _validate_e164(to_number):
             return JsonResponse(
-                {"status": "error", "message": "phone must be in E.164 format (e.g. +919876543210)"},
+                {
+                    "status": "error",
+                    "message": "phone must be in E.164 format (e.g. +919876543210)",
+                },
                 status=400,
             )
 
@@ -227,7 +289,9 @@ def initiate_call(request):
         name = _sanitize(raw_name, _MAX_NAME_LENGTH)
         resume_text = _sanitize(data.get("resume_text") or "", _MAX_RESUME_LENGTH)
         if not jd:
-            return JsonResponse({"status": "error", "message": "jd cannot be empty"}, status=400)
+            return JsonResponse(
+                {"status": "error", "message": "jd cannot be empty"}, status=400
+            )
 
         # Structured recruiter inputs (from UI form) — sanitize each field
         raw_recruiter_inputs = data.get("recruiter_inputs") or {}
@@ -249,17 +313,18 @@ def initiate_call(request):
                 status=400,
             )
 
-        from_number = (
-            (data.get("from_number") or "").strip()
-            or os.getenv("TWILIO_PHONE_NUMBER", "").strip()
-        )
+        from_number = (data.get("from_number") or "").strip() or os.getenv(
+            "TWILIO_PHONE_NUMBER", ""
+        ).strip()
         if not from_number:
             return JsonResponse(
                 {"status": "error", "message": "TWILIO_PHONE_NUMBER not configured"},
                 status=500,
             )
 
-        print(f"[Call] Twilio → Gemini Live | To: {to_number} | Candidate: {name} | Resume: {bool(resume_text)}")
+        print(
+            f"[Call] Twilio → Gemini Live | To: {to_number} | Candidate: {name} | Resume: {bool(resume_text)}"
+        )
         result = _place_call(
             to_number=to_number,
             from_number=from_number,
@@ -273,7 +338,9 @@ def initiate_call(request):
 
     except Exception as e:
         print(f"[Call-Error] {e}")
-        return JsonResponse({"status": "error", "message": "Failed to initiate call"}, status=500)
+        return JsonResponse(
+            {"status": "error", "message": "Failed to initiate call"}, status=500
+        )
 
 
 initiate_outgoing_call = outgoing_call
