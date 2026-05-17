@@ -51,6 +51,9 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             prior_transcript = session.get("prior_transcript", [])
             prior_notes      = session.get("prior_notes", {})
 
+            # Structured recruiter inputs from UI form (may be None)
+            recruiter_inputs = session.get("recruiter_inputs") or None
+
             self._phone        = phone
             self._name         = name
             self._jd           = jd
@@ -63,7 +66,9 @@ class TwilioConsumer(AsyncWebsocketConsumer):
 
             # Pre-call: parse JD → InterviewContext (guaranteed to return)
             manager = AgentManager(session_id=self.channel_name)
-            context = await manager.prepare_session(jd=jd, candidate_name=name)
+            context = await manager.prepare_session(
+                jd=jd, candidate_name=name, recruiter_inputs=recruiter_inputs
+            )
             print(
                 f"[Twilio] Recruiter: {context.recruiter_status} | "
                 f"skills={context.required_skills[:3]}"

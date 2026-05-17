@@ -4,7 +4,8 @@ import {
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
   Copy, TrendingUp, Heart, Package, Code2,
-  FileText, Upload,
+  MapPin, DollarSign, Calendar, Users, Building2,
+  SlidersHorizontal, FileText, Upload,
 } from 'lucide-react';
 
 // ── Outcome config ─────────────────────────────────────────────────────────────
@@ -84,23 +85,41 @@ const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minut
 const fmt     = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
 
 // ── Component ─────────────────────────────────────────────────────────────────
+const WORK_LOCATION_OPTIONS = ['Hybrid', 'Onsite', 'WFH'];
+
+const EMPTY_STRUCTURED = {
+  job_title: '',
+  company_overview: '',
+  team_details: '',
+  company_location: '',
+  required_skills: '',
+  years_of_experience: '',
+  ctc_range: '',
+  required_joining_timeline: '',
+  work_location_type: '',
+};
+
 export default function VoiceChat() {
-  const [status,       setStatus]       = useState('idle');
-  const [messages,     setMessages]     = useState([]);
-  const [recap,        setRecap]        = useState(null);
-  const [jd,           setJd]           = useState('');
-  const [phone,        setPhone]        = useState('+91');
-  const [name,         setName]         = useState('');
-  const [elapsed,      setElapsed]      = useState(0);
-  const [resumeText,   setResumeText]   = useState('');
-  const [resumeStatus, setResumeStatus] = useState('idle'); // idle | uploading | ready | error
-  const [resumeFile,   setResumeFile]   = useState('');
-  const [resumeError,  setResumeError]  = useState('');
-  const [dragOver,     setDragOver]     = useState(false);
+  const [status,           setStatus]          = useState('idle');
+  const [messages,         setMessages]        = useState([]);
+  const [recap,            setRecap]           = useState(null);
+  const [jd,               setJd]              = useState('');
+  const [phone,            setPhone]           = useState('+91');
+  const [name,             setName]            = useState('');
+  const [elapsed,          setElapsed]         = useState(0);
+  const [resumeText,       setResumeText]      = useState('');
+  const [resumeStatus,     setResumeStatus]    = useState('idle'); // idle | uploading | ready | error
+  const [resumeFile,       setResumeFile]      = useState('');
+  const [resumeError,      setResumeError]     = useState('');
+  const [dragOver,         setDragOver]        = useState(false);
+  const [inputMode,        setInputMode]       = useState('prompt');   // 'prompt' | 'structured'
+  const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
+
+  const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -154,9 +173,39 @@ export default function VoiceChat() {
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
     try {
+      let payload = { phone, name };
+
+      if (inputMode === 'prompt') {
+        payload.jd = jd || 'Software Engineer role';
+      } else {
+        // Build a synthetic JD for AI fallback parsing
+        const sf = structuredFields;
+        const parts = [
+          sf.job_title         && `Role: ${sf.job_title}`,
+          sf.company_overview  && `Company: ${sf.company_overview}`,
+          sf.required_skills   && `Required Skills: ${sf.required_skills}`,
+          sf.years_of_experience && `Experience: ${sf.years_of_experience}`,
+          sf.company_location  && `Location: ${sf.company_location}`,
+          sf.work_location_type && `Work Mode: ${sf.work_location_type}`,
+          sf.ctc_range         && `CTC Range: ${sf.ctc_range}`,
+          sf.required_joining_timeline && `Joining Timeline: ${sf.required_joining_timeline}`,
+          sf.team_details      && `Team: ${sf.team_details}`,
+          jd                   && `Additional Details: ${jd}`,
+        ].filter(Boolean);
+        payload.jd = parts.join('\n') || 'Software Engineer role';
+
+        // Send structured fields as explicit overrides for the AI-parsed context
+        const recruiter_inputs = {};
+        ['company_overview', 'team_details', 'company_location', 'years_of_experience',
+         'ctc_range', 'required_joining_timeline', 'work_location_type'].forEach(k => {
+          if (sf[k]?.trim()) recruiter_inputs[k] = sf[k].trim();
+        });
+        if (Object.keys(recruiter_inputs).length) payload.recruiter_inputs = recruiter_inputs;
+      }
+
       const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, jd, name, resume_text: resumeText }),
+        body: JSON.stringify({ ...payload, resume_text: resumeText }),
       });
       const res = await r.json();
       if (res.status === 'success') {
@@ -164,7 +213,7 @@ export default function VoiceChat() {
         setStatus('connected');
       } else { alert(res.message); setStatus('idle'); }
     } catch { alert('Backend unreachable.'); setStatus('idle'); }
-  }, [phone, jd, name, resumeText]);
+  }, [phone, jd, name, resumeText, inputMode, structuredFields]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
@@ -231,17 +280,173 @@ export default function VoiceChat() {
       <main className="flex-1 grid grid-cols-12 gap-4 p-4 max-w-[1440px] w-full mx-auto">
 
         {/* ═══ LEFT — Setup ═══ */}
-        <aside className="col-span-12 lg:col-span-3 flex flex-col gap-3">
+        <aside className="col-span-12 lg:col-span-3 flex flex-col gap-3 overflow-y-auto scrollbar-hide"
+          style={{ maxHeight: 'calc(100vh - 5rem)' }}>
 
-          {/* Job Description */}
+          {/* Input mode toggle */}
           <section className="glass rounded-2xl p-5">
-            <Label icon={<Briefcase size={12} />}>Job Description</Label>
-            <textarea
-              rows={8}
-              className="glass-input w-full rounded-xl p-3.5 text-[13px] placeholder-slate-400 resize-none leading-relaxed mt-3"
-              placeholder="Paste the job description here…"
-              value={jd} onChange={e => setJd(e.target.value)} disabled={isLive}
-            />
+            <Label icon={<Briefcase size={12} />}>Role Requirements</Label>
+
+            {/* Mode switcher */}
+            <div className="flex mt-3 rounded-xl overflow-hidden border border-slate-200/80 bg-slate-50/60">
+              {[
+                { id: 'prompt',     icon: <FileText size={11} />,          label: 'Prompt'     },
+                { id: 'structured', icon: <SlidersHorizontal size={11} />, label: 'Structured' },
+              ].map(({ id, icon, label }) => (
+                <button
+                  key={id}
+                  onClick={() => !isLive && setInputMode(id)}
+                  disabled={isLive}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-semibold transition-all"
+                  style={inputMode === id
+                    ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', boxShadow: '0 2px 8px rgba(99,102,241,0.28)' }
+                    : { color: '#94a3b8' }}
+                >
+                  {icon}{label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Prompt mode ── */}
+            {inputMode === 'prompt' && (
+              <div className="mt-3">
+                <p className="text-[10px] text-slate-400 mb-2 leading-relaxed">
+                  Describe the role in plain English — the AI extracts all details automatically.
+                </p>
+                <textarea
+                  rows={8}
+                  className="glass-input w-full rounded-xl p-3.5 text-[13px] placeholder-slate-400 resize-none leading-relaxed"
+                  placeholder={'e.g. "Senior Python engineer, Bangalore hybrid, 5+ yrs, 25-30 LPA, join within 1 month. Strong FastAPI and Postgres skills needed."'}
+                  value={jd} onChange={e => setJd(e.target.value)} disabled={isLive}
+                />
+              </div>
+            )}
+
+            {/* ── Structured mode ── */}
+            {inputMode === 'structured' && (
+              <div className="mt-3 space-y-3">
+
+                {/* Job title */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1">Job Title</p>
+                  <input type="text"
+                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
+                    placeholder="e.g. Senior Backend Engineer"
+                    value={structuredFields.job_title}
+                    onChange={e => setSF('job_title', e.target.value)} disabled={isLive} />
+                </div>
+
+                {/* Company overview */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
+                    <Building2 size={9} /> Company Overview
+                  </p>
+                  <textarea rows={2}
+                    className="glass-input w-full rounded-xl p-3 text-[12px] placeholder-slate-400 resize-none leading-relaxed"
+                    placeholder="Brief company background…"
+                    value={structuredFields.company_overview}
+                    onChange={e => setSF('company_overview', e.target.value)} disabled={isLive} />
+                </div>
+
+                {/* Team details */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
+                    <Users size={9} /> Team Details
+                  </p>
+                  <input type="text"
+                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
+                    placeholder="e.g. 8-person platform team, reports to VP Eng"
+                    value={structuredFields.team_details}
+                    onChange={e => setSF('team_details', e.target.value)} disabled={isLive} />
+                </div>
+
+                {/* Required skills */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1">Required Skills</p>
+                  <input type="text"
+                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
+                    placeholder="Python, FastAPI, PostgreSQL, Redis…"
+                    value={structuredFields.required_skills}
+                    onChange={e => setSF('required_skills', e.target.value)} disabled={isLive} />
+                </div>
+
+                {/* Experience + CTC (2-col) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-400 mb-1">Experience</p>
+                    <input type="text"
+                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
+                      placeholder="5+ years"
+                      value={structuredFields.years_of_experience}
+                      onChange={e => setSF('years_of_experience', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
+                      <DollarSign size={9} /> Offered CTC
+                    </p>
+                    <input type="text"
+                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
+                      placeholder="25-30 LPA"
+                      value={structuredFields.ctc_range}
+                      onChange={e => setSF('ctc_range', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                {/* Location + Joining (2-col) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
+                      <MapPin size={9} /> Location
+                    </p>
+                    <input type="text"
+                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
+                      placeholder="Bangalore"
+                      value={structuredFields.company_location}
+                      onChange={e => setSF('company_location', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
+                      <Calendar size={9} /> Joining
+                    </p>
+                    <input type="text"
+                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
+                      placeholder="Immediate"
+                      value={structuredFields.required_joining_timeline}
+                      onChange={e => setSF('required_joining_timeline', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                {/* Work location type */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1.5">Work Mode</p>
+                  <div className="flex gap-1.5">
+                    {WORK_LOCATION_OPTIONS.map(opt => {
+                      const active = structuredFields.work_location_type === opt;
+                      return (
+                        <button key={opt} disabled={isLive}
+                          onClick={() => setSF('work_location_type', active ? '' : opt)}
+                          className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold border transition-all"
+                          style={active
+                            ? { background: 'rgba(99,102,241,0.12)', borderColor: 'rgba(99,102,241,0.35)', color: '#4f46e5' }
+                            : { background: 'rgba(248,250,252,0.8)', borderColor: 'rgba(15,23,42,0.10)', color: '#94a3b8' }
+                          }>
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Optional extra JD details */}
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 mb-1">Additional JD Details <span className="text-slate-300">(optional)</span></p>
+                  <textarea rows={2}
+                    className="glass-input w-full rounded-xl p-3 text-[12px] placeholder-slate-400 resize-none leading-relaxed"
+                    placeholder="Paste extra JD text or requirements here…"
+                    value={jd} onChange={e => setJd(e.target.value)} disabled={isLive} />
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Candidate */}
@@ -349,7 +554,7 @@ export default function VoiceChat() {
               </button>
             )}
             {(isLive || isDone) && (
-              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); clearResume(); }}
+              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
                 className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
                 ↺ New Session
               </button>

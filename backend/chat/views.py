@@ -116,6 +116,7 @@ def _place_call(
     retry_num: int = 0,
     prior_transcript: list | None = None,
     prior_notes: dict | None = None,
+    recruiter_inputs: dict | None = None,
     use_legacy_ws_prefix: bool = False,
 ) -> dict:
     clean_host = _clean_host(host_url)
@@ -128,6 +129,8 @@ def _place_call(
         session_data["prior_transcript"] = prior_transcript
     if prior_notes:
         session_data["prior_notes"] = prior_notes
+    if recruiter_inputs:
+        session_data["recruiter_inputs"] = recruiter_inputs
 
     cache.set(f"vox:{token}", session_data, timeout=3600)
     stream_path = _media_stream_path(use_legacy_ws_prefix)
@@ -226,6 +229,19 @@ def initiate_call(request):
         if not jd:
             return JsonResponse({"status": "error", "message": "jd cannot be empty"}, status=400)
 
+        # Structured recruiter inputs (from UI form) — sanitize each field
+        raw_recruiter_inputs = data.get("recruiter_inputs") or {}
+        _RECRUITER_INPUT_FIELDS = {
+            "company_overview", "team_details", "company_location",
+            "years_of_experience", "ctc_range", "required_joining_timeline",
+            "work_location_type",
+        }
+        recruiter_inputs = {
+            k: _sanitize(str(v), 500)
+            for k, v in raw_recruiter_inputs.items()
+            if k in _RECRUITER_INPUT_FIELDS and isinstance(v, str) and v.strip()
+        } or None
+
         public_url = (data.get("host_url") or os.getenv("PUBLIC_URL", "")).strip()
         if not public_url or "ngrok_url_here" in public_url:
             return JsonResponse(
@@ -251,6 +267,7 @@ def initiate_call(request):
             jd=jd,
             name=name,
             resume_text=resume_text,
+            recruiter_inputs=recruiter_inputs,
         )
         return JsonResponse({"status": "success", "call_sid": result["call_sid"]})
 

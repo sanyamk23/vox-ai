@@ -24,10 +24,17 @@ Return ONLY valid JSON — no markdown fences, no extra text:
 {
   "job_title": "<title from JD or best inference>",
   "company_name": "<company name, or empty string if not mentioned>",
+  "company_overview": "<brief company description from JD, or empty string>",
+  "team_details": "<team size, structure, or reporting info from JD, or empty string>",
+  "company_location": "<city/country or 'Remote' if fully remote, or empty string>",
   "required_skills": ["<skill1>", "<skill2>"],
   "nice_to_have_skills": ["<skill1>"],
   "experience_level": "<junior|mid|senior|lead|principal>",
+  "years_of_experience": "<e.g. '3-5 years', '5+', or empty string if not specified>",
   "domain": "<fintech|edtech|healthtech|ecommerce|SaaS|infra|general>",
+  "ctc_range": "<offered salary/CTC range if mentioned, e.g. '15-20 LPA', or empty string>",
+  "required_joining_timeline": "<joining timeline if mentioned, e.g. 'Immediate', '1 month', or empty string>",
+  "work_location_type": "<Hybrid|Onsite|WFH or empty string if not mentioned>",
   "custom_questions": [
     "<natural probe question targeting a specific JD requirement>",
     "<natural probe question targeting another JD requirement>",
@@ -49,7 +56,7 @@ Rules for custom_questions (max 3):
 Rules for phase_weights (values 0.5–2.0, default 1.0):
 - Senior/principal/staff: exploration=1.5 (deeper technical probing)
 - Startup/product/founding: motivation=1.5 (culture fit matters more)
-- Logistics-heavy JDs (contract, relocation): logistics=1.5
+- Logistics-heavy JDs (contract, relocation, short timeline): logistics=1.5
 - Default to 1.0 when unsure — never set below 0.5
 """
 
@@ -91,7 +98,7 @@ class RecruiterAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=700,
+                max_output_tokens=1000,
             ),
         )
 
@@ -104,10 +111,17 @@ class RecruiterAgent(BaseAgent):
         ctx = InterviewContext(
             job_title=data.get("job_title", "Software Engineer"),
             company_name=data.get("company_name", ""),
+            company_overview=data.get("company_overview", ""),
+            team_details=data.get("team_details", ""),
+            company_location=data.get("company_location", ""),
             required_skills=(data.get("required_skills") or [])[:10],
             nice_to_have_skills=(data.get("nice_to_have_skills") or [])[:5],
             experience_level=data.get("experience_level", "mid"),
+            years_of_experience=data.get("years_of_experience", ""),
             domain=data.get("domain", ""),
+            ctc_range=data.get("ctc_range", ""),
+            required_joining_timeline=data.get("required_joining_timeline", ""),
+            work_location_type=data.get("work_location_type", ""),
             custom_questions=(data.get("custom_questions") or [])[:3],
             phase_weights=data.get("phase_weights") or {},
             raw_jd=jd,

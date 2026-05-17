@@ -213,21 +213,48 @@ def build_enriched_system_prompt(
         )
 
     if context.recruiter_status != "fallback_used":
+        # Role requirements block — guides targeted probing
+        role_req_lines: list[str] = []
+        if context.years_of_experience:
+            role_req_lines.append(f"  - Experience Required: {context.years_of_experience}")
+        if context.work_location_type:
+            role_req_lines.append(
+                f"  - Work Mode: {context.work_location_type} — confirm the candidate is comfortable with this"
+            )
+        if context.company_location:
+            role_req_lines.append(f"  - Location: {context.company_location}")
+        if context.ctc_range:
+            role_req_lines.append(
+                f"  - Offered CTC: {context.ctc_range} — share this as the budget range when discussing compensation"
+            )
+        if context.required_joining_timeline:
+            role_req_lines.append(
+                f"  - Joining Timeline: {context.required_joining_timeline} — check if the candidate can meet this"
+            )
+        if role_req_lines:
+            extras.append("ROLE REQUIREMENTS (use to guide your screening questions):\n" + "\n".join(role_req_lines))
+
         if context.required_skills:
             skill_lines = "\n".join(f"  - {s}" for s in context.required_skills[:8])
-            extras.append(
-                f"KEY SKILLS TO PROBE (from JD — weave in naturally):\n{skill_lines}"
-            )
+            extras.append(f"KEY SKILLS TO PROBE (from JD — weave in naturally):\n{skill_lines}")
+
         if context.custom_questions:
             q_lines = "\n".join(f"  - {q}" for q in context.custom_questions)
-            extras.append(
-                f"JD-SPECIFIC PROBE QUESTIONS (use 1-2, naturally):\n{q_lines}"
-            )
+            extras.append(f"JD-SPECIFIC PROBE QUESTIONS (use 1-2, naturally):\n{q_lines}")
+
+        # Company context block
+        company_info_lines: list[str] = []
+        if context.company_overview:
+            company_info_lines.append(f"  Overview: {context.company_overview[:400]}")
+        if context.team_details:
+            company_info_lines.append(f"  Team: {context.team_details[:300]}")
         if context.company_context.get("description"):
+            company_info_lines.append(f"  Background: {context.company_context['description'][:300]}")
+        if company_info_lines:
             extras.append(
-                f"COMPANY CONTEXT (use to answer candidate questions naturally):\n"
-                f"  {context.company_context['description'][:300]}"
+                "COMPANY CONTEXT (use to answer candidate questions naturally):\n" + "\n".join(company_info_lines)
             )
+
 
     if not extras:
         return base

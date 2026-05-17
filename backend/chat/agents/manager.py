@@ -12,6 +12,20 @@ from .schemas import InterviewContext, EvalReport
 
 logger = logging.getLogger(__name__)
 
+_OVERRIDE_FIELDS = [
+    "company_overview", "team_details", "company_location",
+    "years_of_experience", "ctc_range", "required_joining_timeline",
+    "work_location_type",
+]
+
+
+def _apply_recruiter_overrides(context: InterviewContext, recruiter_inputs: dict) -> None:
+    """Apply pre-filled structured fields from the UI, overriding AI-parsed values."""
+    for field in _OVERRIDE_FIELDS:
+        val = (recruiter_inputs.get(field) or "").strip()
+        if val:
+            setattr(context, field, val)
+
 
 class AgentManager:
     """
@@ -42,17 +56,25 @@ class AgentManager:
         self,
         jd: str,
         candidate_name: str = "",
+        recruiter_inputs: dict | None = None,
     ) -> InterviewContext:
         """
         Parse the JD and build an InterviewContext before the call starts.
         Guaranteed to return — falls back to raw-JD context if parsing fails.
         Also launches background company intel fetch (non-blocking).
+
+        recruiter_inputs: pre-filled structured fields from the UI that override
+        AI-parsed values (company_overview, team_details, company_location,
+        years_of_experience, ctc_range, required_joining_timeline, work_location_type).
         """
         recruiter = RecruiterAgent(gemini_client=self._gemini_client)
         self._agents["recruiter"] = recruiter
 
         context: InterviewContext = await recruiter.run_with_guardrails(jd, candidate_name)
         self._log_agent("recruiter")
+
+        if recruiter_inputs:
+            _apply_recruiter_overrides(context, recruiter_inputs)
 
         # Launch background intel enrichment — does NOT block call start
         if context.company_name:
