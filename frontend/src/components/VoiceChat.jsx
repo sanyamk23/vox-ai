@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Phone, Activity, Briefcase, User,
   PhoneCall, CheckCircle, XCircle, AlertTriangle,
   MessageSquare, Loader2, Zap, Clock, Sparkles,
   Copy, TrendingUp, Heart, Package, Code2,
   MapPin, DollarSign, Calendar, Users, Building2,
-  SlidersHorizontal, FileText, Upload,
+  SlidersHorizontal, FileText, Upload, Mic, Square, BarChart3,
 } from 'lucide-react';
+import CallConsole from './CallConsole';
 
 // ── Outcome config ─────────────────────────────────────────────────────────────
 const OUTCOME = {
@@ -117,13 +120,21 @@ export default function VoiceChat() {
   const [inputMode,        setInputMode]       = useState('prompt');   // 'prompt' | 'structured'
   const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
   const [connectingType,   setConnectingType]  = useState(null);
+  const [toast,            setToast]           = useState(null);
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
   const pollRef      = useRef(null);
+  const wsRef        = useRef(null);
+  const [bars, setBars] = useState(Array(20).fill(0));
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
+
+  const showToast = useCallback((message, type = 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -175,6 +186,19 @@ export default function VoiceChat() {
     setResumeError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+
+  const cleanup = useCallback(() => {
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    clearInterval(pollRef.current);
+    setBars(Array(20).fill(0));
+    setStatus('ended');
+    setConnectingType(null);
+  }, []);
+
+  const startWeb = useCallback(async () => {
+    if (!name) { showToast('Please enter a candidate name first'); return; }
+    showToast('Web call coming soon — use phone call for now', 'info');
+  }, [name, showToast]);
 
   const _startPolling = useCallback((callSid) => {
     clearInterval(pollRef.current);
@@ -256,556 +280,435 @@ export default function VoiceChat() {
   const isBusy  = status === 'connecting';
   const isDone  = status === 'ended';
 
+  if (isLive) {
+    return (
+      <CallConsole 
+        name={name}
+        phone={phone}
+        elapsed={elapsed}
+        messages={messages}
+        endRef={endRef}
+        onEnd={cleanup}
+        bars={bars}
+        fmt={fmt}
+        status={status}
+      />
+    );
+  }
+
   // ── Status pill config ──────────────────────────────────────────────────────
   const pill = isLive
-    ? { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a', dot: '#22c55e', label: 'Call In Progress', pulse: true  }
+    ? { bg: 'rgba(111,255,0,0.1)', bd: 'rgba(111,255,0,0.3)', tx: '#6FFF00', dot: '#6FFF00', label: 'SESSION ACTIVE', pulse: true }
     : isBusy
-    ? { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309', dot: '#f59e0b', label: 'Initiating…',      pulse: true  }
+    ? { bg: 'rgba(255,255,255,0.1)', bd: 'rgba(255,255,255,0.2)', tx: '#EFF4FF', dot: '#EFF4FF', label: 'CONNECTING...',  pulse: true }
     : isDone
-    ? { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b', dot: '#94a3b8', label: 'Session Ended',    pulse: false }
-    : { bg: '#f8fafc', bd: '#e2e8f0', tx: '#94a3b8', dot: '#cbd5e1', label: 'Ready',            pulse: false };
+    ? { bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.1)', tx: 'rgba(239,244,255,0.5)', dot: 'rgba(239,244,255,0.3)', label: 'SESSION ENDED',  pulse: false }
+    : { bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.1)', tx: '#EFF4FF', dot: 'rgba(239,244,255,0.5)', label: 'READY', pulse: false };
 
   return (
-    <div className="min-h-screen flex flex-col">
-
-      {/* ── Ambient orbs ── */}
-      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none" aria-hidden>
-        <div className="absolute -top-[10%] left-[5%]  w-[800px] h-[800px] rounded-full opacity-60"
-          style={{ background: 'radial-gradient(circle, rgba(199,210,254,0.55) 0%, transparent 65%)', animation: 'drift1 16s ease-in-out infinite' }} />
-        <div className="absolute -bottom-[15%] right-[5%] w-[900px] h-[900px] rounded-full opacity-50"
-          style={{ background: 'radial-gradient(circle, rgba(221,214,254,0.50) 0%, transparent 65%)', animation: 'drift2 20s ease-in-out infinite' }} />
-        <div className="absolute top-[35%] right-[25%]  w-[500px] h-[500px] rounded-full opacity-40"
-          style={{ background: 'radial-gradient(circle, rgba(186,230,253,0.45) 0%, transparent 65%)', animation: 'drift3 12s ease-in-out infinite' }} />
+    <div className="relative min-h-screen bg-background text-cream overflow-hidden font-sans selection:bg-neon selection:text-background">
+      {/* Texture Overlay */}
+      <div 
+        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
+        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      />
+      
+      {/* Background Video */}
+      <div className="fixed inset-0 z-0 opacity-20">
+        <video 
+          className="absolute inset-0 w-full h-full object-cover"
+          autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
+        />
+        <div className="absolute inset-0 bg-background/40" />
+      </div>
+      {/* Texture Overlay */}
+      <div 
+        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
+        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      />
+      
+      {/* Background Video */}
+      <div className="fixed inset-0 z-0 opacity-40">
+        <video 
+          className="absolute inset-0 w-full h-full object-cover"
+          autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4"
+        />
+        <div className="absolute inset-0 bg-background/60" />
       </div>
 
       {/* ── Navigation ── */}
-      <header className="glass-nav sticky top-0 z-30 flex items-center justify-between px-6 py-3">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', boxShadow: '0 4px 16px rgba(99,102,241,0.30)' }}>
-            <Zap size={14} className="text-white" fill="white" />
+      <header className="relative z-40 px-6 sm:px-12 py-6 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-3">
+          <div className="font-grotesk text-[20px] uppercase tracking-wide">
+            Clarix.Ai
           </div>
-          <div>
-            <h1 className="text-[13px] font-bold tracking-tight text-slate-900 leading-none">Project Vox</h1>
-            <p  className="text-[10px] text-slate-400 mt-[3px] leading-none font-medium">AI-Powered HR Screening</p>
-          </div>
-        </div>
+          <span className="font-condiment text-neon text-[20px] ml-2 -rotate-2">screening</span>
+        </Link>
 
-        <div className="flex items-center gap-4">
+        <nav className="hidden lg:flex liquid-glass rounded-[28px] px-12 py-4 items-center gap-10">
+          {[
+            { name: 'Home', path: '/' },
+            { name: 'About', path: '/about' },
+            { name: 'Features', path: '/features' },
+            { name: 'Dashboard', path: '/dashboard' },
+            { name: 'App', path: '/app' },
+          ].map(link => (
+            <Link key={link.name} to={link.path} className={`font-grotesk text-[13px] uppercase tracking-widest transition-colors ${link.path === '/app' ? 'text-neon' : 'hover:text-neon'}`}>
+              {link.name}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-5">
           {isLive && (
-            <span className="text-[12px] font-mono font-semibold text-slate-500 tabular-nums tracking-tight">{fmt(elapsed)}</span>
+            <span className="text-[14px] font-mono font-bold text-cream tabular-nums">{fmt(elapsed)}</span>
           )}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold border select-none"
-            style={{
-              background: pill.bg, borderColor: pill.bd, color: pill.tx,
-              animation: (isLive || isBusy) ? 'statusPop 0.28s ease-out' : 'none',
-            }}>
-            <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-              style={{ background: pill.dot, animation: pill.pulse ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
+          <div className="flex items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-mono border select-none transition-colors backdrop-blur-sm"
+            style={{ background: pill.bg, borderColor: pill.bd, color: pill.tx }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: pill.dot, animation: pill.pulse ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
             {pill.label}
           </div>
         </div>
       </header>
 
-      {/* ── Main grid ── */}
-      <main className="flex-1 grid grid-cols-12 gap-4 p-4 max-w-[1440px] w-full mx-auto">
+      {/* ── Main Layout ── */}
+      <main className="relative z-10 flex-1 w-full max-w-[1831px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 lg:p-6 overflow-hidden h-[calc(100vh-88px)]">
 
-        {/* ═══ LEFT — Setup ═══ */}
-        <aside className="col-span-12 lg:col-span-3 flex flex-col gap-3 overflow-y-auto scrollbar-hide"
-          style={{ maxHeight: 'calc(100vh - 5rem)' }}>
-
-          {/* Input mode toggle */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<Briefcase size={12} />}>Role Requirements</Label>
-
-            {/* Mode switcher */}
-            <div className="flex mt-3 rounded-xl overflow-hidden border border-slate-200/80 bg-slate-50/60">
-              {[
-                { id: 'prompt',     icon: <FileText size={11} />,          label: 'Prompt'     },
-                { id: 'structured', icon: <SlidersHorizontal size={11} />, label: 'Structured' },
-              ].map(({ id, icon, label }) => (
-                <button
-                  key={id}
-                  onClick={() => !isLive && setInputMode(id)}
-                  disabled={isLive}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-semibold transition-all"
-                  style={inputMode === id
-                    ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', boxShadow: '0 2px 8px rgba(99,102,241,0.28)' }
-                    : { color: '#94a3b8' }}
-                >
-                  {icon}{label}
-                </button>
-              ))}
+        {/* ═══ LEFT PANEL — Setup ═══ */}
+        <aside className="col-span-12 lg:col-span-3 flex flex-col liquid-glass rounded-[32px] overflow-hidden">
+          <div className="p-4 lg:p-5 flex-1 overflow-y-auto space-y-6 scrollbar-hide">
+            
+            <div className="space-y-1">
+              <h2 className="font-grotesk uppercase text-[22px] leading-none">Role Info</h2>
+              <p className="font-mono text-[11px] text-cream/50 uppercase">Configure AI Parameters</p>
             </div>
 
-            {/* ── Prompt mode ── */}
-            {inputMode === 'prompt' && (
-              <div className="mt-3">
-                <p className="text-[10px] text-slate-400 mb-2 leading-relaxed">
-                  Describe the role in plain English — the AI extracts all details automatically.
-                </p>
+            {/* Input Mode Toggle */}
+            <div className="flex p-1 bg-white/5 rounded-[16px] backdrop-blur-md">
+              <button onClick={() => setInputMode('prompt')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'prompt' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Freeform</button>
+              <button onClick={() => setInputMode('structured')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'structured' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Structured</button>
+            </div>
+
+            {inputMode === 'prompt' ? (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Job Description</label>
                 <textarea
                   rows={8}
-                  className="glass-input w-full rounded-xl p-3.5 text-[13px] placeholder-slate-400 resize-none leading-relaxed"
-                  placeholder={'e.g. "Senior Python engineer, Bangalore hybrid, 5+ yrs, 25-30 LPA, join within 1 month. Strong FastAPI and Postgres skills needed."'}
+                  className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-3 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all resize-none backdrop-blur-md"
+                  placeholder="Paste the full job description here..."
                   value={jd} onChange={e => setJd(e.target.value)} disabled={isLive}
                 />
               </div>
-            )}
-
-            {/* ── Structured mode ── */}
-            {inputMode === 'structured' && (
-              <div className="mt-3 space-y-3">
-
-                {/* Job title */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1">Job Title</p>
-                  <input type="text"
-                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
-                    placeholder="e.g. Senior Backend Engineer"
-                    value={structuredFields.job_title}
-                    onChange={e => setSF('job_title', e.target.value)} disabled={isLive} />
-                </div>
-
-                {/* Company overview */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
-                    <Building2 size={9} /> Company Overview
-                  </p>
-                  <textarea rows={2}
-                    className="glass-input w-full rounded-xl p-3 text-[12px] placeholder-slate-400 resize-none leading-relaxed"
-                    placeholder="Brief company background…"
-                    value={structuredFields.company_overview}
-                    onChange={e => setSF('company_overview', e.target.value)} disabled={isLive} />
-                </div>
-
-                {/* Team details */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
-                    <Users size={9} /> Team Details
-                  </p>
-                  <input type="text"
-                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
-                    placeholder="e.g. 8-person platform team, reports to VP Eng"
-                    value={structuredFields.team_details}
-                    onChange={e => setSF('team_details', e.target.value)} disabled={isLive} />
-                </div>
-
-                {/* Required skills */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1">Required Skills</p>
-                  <input type="text"
-                    className="glass-input w-full rounded-xl py-2.5 px-3.5 text-[13px]"
-                    placeholder="Python, FastAPI, PostgreSQL, Redis…"
-                    value={structuredFields.required_skills}
-                    onChange={e => setSF('required_skills', e.target.value)} disabled={isLive} />
-                </div>
-
-                {/* Experience + CTC (2-col) */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-[10px] font-medium text-slate-400 mb-1">Experience</p>
-                    <input type="text"
-                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
-                      placeholder="5+ years"
-                      value={structuredFields.years_of_experience}
-                      onChange={e => setSF('years_of_experience', e.target.value)} disabled={isLive} />
+            ) : (
+              <div className="space-y-5">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Job Title</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. Senior Frontend Engineer" value={structuredFields.job_title} onChange={e => setSF('job_title', e.target.value)} disabled={isLive} />
                   </div>
-                  <div>
-                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
-                      <DollarSign size={9} /> Offered CTC
-                    </p>
-                    <input type="text"
-                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
-                      placeholder="25-30 LPA"
-                      value={structuredFields.ctc_range}
-                      onChange={e => setSF('ctc_range', e.target.value)} disabled={isLive} />
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Required Skills</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. React, Node.js, Typescript" value={structuredFields.required_skills} onChange={e => setSF('required_skills', e.target.value)} disabled={isLive} />
                   </div>
                 </div>
 
-                {/* Location + Joining (2-col) */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
-                      <MapPin size={9} /> Location
-                    </p>
-                    <input type="text"
-                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
-                      placeholder="Bangalore"
-                      value={structuredFields.company_location}
-                      onChange={e => setSF('company_location', e.target.value)} disabled={isLive} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Years Exp.</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. 5+ Years" value={structuredFields.years_of_experience} onChange={e => setSF('years_of_experience', e.target.value)} disabled={isLive} />
                   </div>
-                  <div>
-                    <p className="text-[10px] font-medium text-slate-400 mb-1 flex items-center gap-1">
-                      <Calendar size={9} /> Joining
-                    </p>
-                    <input type="text"
-                      className="glass-input w-full rounded-xl py-2.5 px-3 text-[12px]"
-                      placeholder="Immediate"
-                      value={structuredFields.required_joining_timeline}
-                      onChange={e => setSF('required_joining_timeline', e.target.value)} disabled={isLive} />
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">CTC Range</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="e.g. 25-30 LPA" value={structuredFields.ctc_range} onChange={e => setSF('ctc_range', e.target.value)} disabled={isLive} />
                   </div>
                 </div>
 
-                {/* Work location type */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1.5">Work Mode</p>
-                  <div className="flex gap-1.5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Location</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="Bangalore" value={structuredFields.company_location} onChange={e => setSF('company_location', e.target.value)} disabled={isLive} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Joining</label>
+                    <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-2.5 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all backdrop-blur-md"
+                      placeholder="Immediate" value={structuredFields.required_joining_timeline} onChange={e => setSF('required_joining_timeline', e.target.value)} disabled={isLive} />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Work Mode</label>
+                  <div className="flex gap-2">
                     {WORK_LOCATION_OPTIONS.map(opt => {
                       const active = structuredFields.work_location_type === opt;
                       return (
-                        <button key={opt} disabled={isLive}
-                          onClick={() => setSF('work_location_type', active ? '' : opt)}
-                          className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold border transition-all"
-                          style={active
-                            ? { background: 'rgba(99,102,241,0.12)', borderColor: 'rgba(99,102,241,0.35)', color: '#4f46e5' }
-                            : { background: 'rgba(248,250,252,0.8)', borderColor: 'rgba(15,23,42,0.10)', color: '#94a3b8' }
-                          }>
+                        <button key={opt} disabled={isLive} onClick={() => setSF('work_location_type', active ? '' : opt)}
+                          className={`flex-1 py-2 rounded-[12px] text-[11px] font-mono uppercase transition-all backdrop-blur-md ${active ? 'bg-neon/20 border border-neon text-neon' : 'bg-white/5 border border-white/10 text-cream/50 hover:bg-white/10 hover:text-cream'}`}>
                           {opt}
                         </button>
                       );
                     })}
                   </div>
                 </div>
-
-                {/* Optional extra JD details */}
-                <div>
-                  <p className="text-[10px] font-medium text-slate-400 mb-1">Additional JD Details <span className="text-slate-300">(optional)</span></p>
-                  <textarea rows={2}
-                    className="glass-input w-full rounded-xl p-3 text-[12px] placeholder-slate-400 resize-none leading-relaxed"
-                    placeholder="Paste extra JD text or requirements here…"
-                    value={jd} onChange={e => setJd(e.target.value)} disabled={isLive} />
-                </div>
               </div>
             )}
-          </section>
 
-          {/* Candidate */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<User size={12} />}>Candidate</Label>
-            <div className="space-y-2 mt-3">
-              <div className="relative">
-                <User size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <input type="text"
-                  className="glass-input w-full rounded-xl py-2.5 pl-9 pr-3.5 text-[13px]"
-                  placeholder="Full name"
-                  value={name} onChange={e => setName(e.target.value)} disabled={isLive} />
-              </div>
-              <div className="relative">
-                <Phone size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <input type="text"
-                  className="glass-input w-full rounded-xl py-2.5 pl-9 pr-3.5 text-[13px] font-mono"
-                  placeholder="+91 XXXXX XXXXX"
-                  value={phone} onChange={e => setPhone(e.target.value)} disabled={isLive} />
+            <div className="h-px bg-white/10" />
+
+            <div className="space-y-4">
+              <h3 className="font-grotesk uppercase text-[24px] leading-none">Candidate</h3>
+              <div className="space-y-3">
+                <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 py-3 px-4 text-[13px] font-mono text-cream focus:outline-none focus:ring-1 focus:ring-neon transition-all placeholder-cream/30 backdrop-blur-md"
+                  placeholder="Full name" value={name} onChange={e => setName(e.target.value)} disabled={isLive} />
+                <input type="text" className="w-full rounded-[16px] bg-white/5 border border-white/10 py-3 px-4 text-[13px] font-mono text-cream focus:outline-none focus:ring-1 focus:ring-neon transition-all placeholder-cream/30 backdrop-blur-md"
+                  placeholder="+91 XXXXX XXXXX" value={phone} onChange={e => setPhone(e.target.value)} disabled={isLive} />
               </div>
             </div>
-          </section>
 
-          {/* Resume Upload */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<FileText size={12} />}>Resume <span className="text-slate-300 font-normal normal-case tracking-normal">(optional)</span></Label>
-            <div
-              className="mt-3 rounded-xl border-2 border-dashed transition-all cursor-pointer"
-              style={{
-                borderColor: dragOver ? '#6366f1' : resumeStatus === 'ready' ? 'rgba(16,185,129,0.40)' : resumeStatus === 'error' ? 'rgba(239,68,68,0.35)' : 'rgba(99,102,241,0.25)',
-                background:  dragOver ? 'rgba(99,102,241,0.05)' : resumeStatus === 'ready' ? 'rgba(16,185,129,0.04)' : 'transparent',
-              }}
-              onDragOver={(e) => { e.preventDefault(); if (!isLive) setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!isLive) handleResumeFile(e.dataTransfer.files[0]); }}
-              onClick={() => { if (!isLive && resumeStatus !== 'uploading') fileInputRef.current?.click(); }}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.docx"
-                className="hidden"
-                onChange={(e) => handleResumeFile(e.target.files[0])}
-              />
-
-              {resumeStatus === 'idle' && (
-                <div className="py-5 flex flex-col items-center gap-2">
-                  <Upload size={18} className="text-indigo-400" />
-                  <p className="text-[11px] text-slate-400 text-center leading-relaxed px-2">
-                    Drop PDF or DOCX here<br />or click to browse
-                  </p>
-                </div>
-              )}
-
-              {resumeStatus === 'uploading' && (
-                <div className="py-5 flex flex-col items-center gap-2">
-                  <Loader2 size={18} className="text-indigo-500 animate-spin" />
-                  <p className="text-[11px] text-indigo-600 font-medium">Parsing resume…</p>
-                </div>
-              )}
-
-              {resumeStatus === 'ready' && (
-                <div className="py-4 px-3 flex items-start gap-2.5">
-                  <CheckCircle size={15} className="text-emerald-500 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold text-emerald-700 truncate">{resumeFile}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">{resumeText.length.toLocaleString()} characters extracted</p>
-                  </div>
-                </div>
-              )}
-
-              {resumeStatus === 'error' && (
-                <div className="py-4 px-3 flex items-start gap-2.5">
-                  <XCircle size={15} className="text-red-500 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="text-[11px] text-red-600 leading-snug">{resumeError}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Click to try again</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {resumeStatus === 'ready' && (
-              <button
-                onClick={(e) => { e.stopPropagation(); clearResume(); }}
-                className="mt-2 w-full text-[10px] text-slate-400 hover:text-red-500 transition-colors text-center"
+            <div className="space-y-4">
+              <h3 className="font-grotesk uppercase text-[24px] leading-none">Resume Context</h3>
+              <div
+                className="rounded-[16px] border border-white/10 transition-all cursor-pointer overflow-hidden group bg-white/5 backdrop-blur-md"
+                style={{
+                  borderColor: dragOver ? '#6FFF00' : resumeStatus === 'ready' ? '#6FFF00' : resumeStatus === 'error' ? '#ef4444' : 'rgba(255,255,255,0.1)',
+                  background:  dragOver ? 'rgba(111,255,0,0.05)' : resumeStatus === 'ready' ? 'rgba(111,255,0,0.02)' : 'rgba(255,255,255,0.02)',
+                }}
+                onDragOver={(e) => { e.preventDefault(); if (!isLive) setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!isLive) handleResumeFile(e.dataTransfer.files[0]); }}
+                onClick={() => { if (!isLive && resumeStatus !== 'uploading') fileInputRef.current?.click(); }}
               >
-                ✕ Remove resume
-              </button>
-            )}
-          </section>
+                <input ref={fileInputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={(e) => handleResumeFile(e.target.files[0])} />
 
-          {/* CTA */}
-          <div className="space-y-2">
+                {resumeStatus === 'idle' && (
+                  <div className="py-6 flex flex-col items-center gap-2 group-hover:bg-white/5 transition-colors">
+                    <Upload size={16} className="text-cream/50" />
+                    <p className="font-mono text-[11px] text-cream/50 uppercase">Drop PDF/DOCX here</p>
+                  </div>
+                )}
+
+                {resumeStatus === 'uploading' && (
+                  <div className="py-6 flex flex-col items-center gap-2">
+                    <Loader2 size={16} className="text-neon animate-spin" />
+                    <p className="font-mono text-[11px] text-neon uppercase">Parsing resume...</p>
+                  </div>
+                )}
+
+                {resumeStatus === 'ready' && (
+                  <div className="py-4 px-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-neon/20 flex items-center justify-center flex-shrink-0">
+                      <CheckCircle size={14} className="text-neon" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[11px] text-neon truncate">{resumeFile}</p>
+                      <p className="font-mono text-[9px] text-neon/70 mt-0.5">{resumeText.length.toLocaleString()} chars</p>
+                    </div>
+                  </div>
+                )}
+
+                {resumeStatus === 'error' && (
+                  <div className="py-4 px-4 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                      <XCircle size={14} className="text-red-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[11px] text-red-400 leading-snug">{resumeError}</p>
+                      <p className="font-mono text-[9px] text-red-400/70 mt-0.5">Click to try again</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {resumeStatus === 'ready' && (
+                <button onClick={(e) => { e.stopPropagation(); clearResume(); }} className="w-full font-mono text-[10px] text-cream/40 hover:text-red-400 uppercase transition-colors text-left pl-1">
+                  Remove attachment
+                </button>
+              )}
+            </div>
+            <div className="pb-4" />
+          </div>
+
+          {/* CTA Footer */}
+          <div className="p-5 border-t border-white/10 bg-black/20 backdrop-blur-xl">
             {isLive ? (
-              <div className="py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2 text-slate-400 border border-dashed border-slate-200 select-none">
-                <PhoneCall size={14} className="text-emerald-500" />
-                Session in progress…
+              <div className="flex gap-2">
+                <div className="flex-1 py-3.5 rounded-[16px] font-grotesk text-[20px] uppercase flex items-center justify-center gap-2 text-neon bg-neon/10 border border-neon/30 select-none">
+                  {wsRef.current ? <Mic size={18} className="animate-pulse" /> : <PhoneCall size={18} className="animate-pulse" />}
+                  Active Session
+                </div>
+                {wsRef.current && (
+                  <button onClick={cleanup} className="bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/50 hover:border-red-500 px-6 rounded-[16px] flex items-center justify-center transition-colors">
+                    <Square size={16} fill="currentColor" />
+                  </button>
+                )}
               </div>
             ) : (
-              <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91' || !name}
-                className="btn-primary w-full py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                {isBusy && connectingType === 'phone' ? <Loader2 size={14} className="animate-spin" /> : <PhoneCall size={14} />}
-                {isBusy && connectingType === 'phone' ? 'Initiating…' : 'Trigger Outbound Call'}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button onClick={startWeb} disabled={isBusy || !name}
+                  className="w-full py-3.5 rounded-[16px] font-grotesk text-[24px] uppercase flex items-center justify-center gap-3 bg-neon text-background hover:bg-[#8aff2a] disabled:opacity-50 disabled:bg-white/10 disabled:text-cream/50 transition-colors shadow-[0_0_20px_rgba(111,255,0,0.2)]">
+                  {isBusy && connectingType === 'web' ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}
+                  {isBusy && connectingType === 'web' ? 'CONNECTING...' : 'START WEB CALL'}
+                </button>
+                <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
+                  className="w-full py-3.5 rounded-[16px] font-grotesk text-[20px] uppercase flex items-center justify-center gap-2 bg-transparent text-cream border border-cream/20 hover:bg-white/5 disabled:opacity-50 transition-colors">
+                  {isBusy && connectingType === 'phone' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                  {isBusy && connectingType === 'phone' ? 'INITIATING...' : 'CALL PHONE'}
+                </button>
+              </div>
             )}
             {(isLive || isDone) && (
               <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
-                className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
-                ↺ New Session
+                className="w-full mt-3 py-2 font-mono text-[10px] text-cream/40 hover:text-cream uppercase tracking-widest transition-colors">
+                Start New Session
               </button>
             )}
           </div>
-
-          {/* AI Stack */}
-          <section className="glass rounded-2xl p-5">
-            <Label icon={<Sparkles size={12} />}>AI Stack</Label>
-            <div className="mt-3 space-y-2">
-              {[
-                { label: 'Brain',    value: 'Gemini Live' },
-                { label: 'Persona',  value: 'Priya · HR screening' },
-                { label: 'Channel',  value: 'Outbound call' },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-slate-400">{label}</span>
-                  <span className="text-[11px] font-semibold text-indigo-600">{value}</span>
-                </div>
-              ))}
-            </div>
-          </section>
         </aside>
 
-        {/* ═══ CENTER — Log ═══ */}
-        <section className="col-span-12 lg:col-span-6">
-          <div className="glass rounded-2xl flex flex-col" style={{ minHeight: 640 }}>
+        {/* ═══ CENTER PANEL — Log ═══ */}
+        <section className="col-span-12 lg:col-span-6 flex flex-col liquid-glass rounded-[32px] overflow-hidden relative">
+          
+          <div className="px-8 py-5 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
+            <h2 className="font-grotesk uppercase text-[22px] leading-none">Transcript</h2>
+            <MessageSquare size={16} className="text-cream/50" />
+          </div>
 
-            {/* Chat header */}
-            <div className="px-5 py-4 flex items-center gap-2 border-b border-black/[0.05]">
-              <MessageSquare size={13} className="text-indigo-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Call Log
-              </span>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5 scrollbar-hide">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center gap-4 select-none" style={{ minHeight: 340 }}>
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.10))', border: '1px solid rgba(99,102,241,0.14)' }}>
-                    <PhoneCall size={22} className="text-indigo-500" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-400">Ready to Call</p>
-                    <p className="text-xs text-slate-300 mt-1.5">Fill in the candidate details and trigger an outbound call.</p>
-                  </div>
+          <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 lg:space-y-6 scrollbar-hide bg-black/20">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center gap-5 select-none opacity-80">
+                <div className="w-16 h-16 rounded-[20px] liquid-glass flex items-center justify-center text-neon shadow-[0_0_30px_rgba(111,255,0,0.15)]">
+                  <Sparkles size={24} />
                 </div>
-              ) : (
-                messages.map((m, i) => (
-                  <div key={i} className="flex justify-center msg-in">
-                    <div className="text-[11px] text-slate-400 italic px-4 py-1.5 rounded-full"
-                      style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.11)' }}>
-                      {m.text}
-                    </div>
-                  </div>
-                ))
-              )}
-              <div ref={endRef} />
-            </div>
-
-            {/* Status footer */}
-            <div className="px-5 pb-4 pt-3 border-t border-black/[0.05]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                    style={{ background: isLive ? '#22c55e' : '#cbd5e1', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
-                  <span className="text-[10px] font-medium text-slate-400">
-                    {isLive ? 'Call in progress — Priya is speaking with the candidate' : 'No active call'}
-                  </span>
+                <div className="text-center space-y-1">
+                  <p className="font-grotesk text-[32px] uppercase tracking-wide">Awaiting Signal</p>
+                  <p className="font-mono text-[12px] text-cream/50 max-w-[240px] mx-auto">Fill the parameters and initiate the screening.</p>
                 </div>
               </div>
+            ) : (
+              messages.map((m, i) => (
+                <div key={i} className={`flex flex-col ${m.role === 'system' ? 'items-center' : m.role === 'user' ? 'items-end' : 'items-start'} max-w-full`}>
+                  {m.role === 'system' ? (
+                    <div className="font-mono text-[9px] uppercase text-neon/80 bg-neon/10 border border-neon/20 px-4 py-1.5 rounded-full my-2">
+                      {m.text}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 max-w-[85%]">
+                      <span className={`font-mono text-[10px] uppercase tracking-widest ${m.role === 'user' ? 'text-cream/50 text-right' : 'text-neon text-left'}`}>
+                        {m.role === 'user' ? (name || 'CANDIDATE') : 'PRIYA AI'}
+                      </span>
+                      <div className={`font-mono text-[13px] leading-relaxed px-5 py-4 shadow-sm ${m.role === 'user' ? 'bg-cream text-background rounded-[20px] rounded-tr-sm' : 'liquid-glass text-cream rounded-[20px] rounded-tl-sm'}`}>
+                        {m.text}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Status footer */}
+          <div className="p-5 border-t border-white/10 flex items-center justify-between bg-black/20 backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full" style={{ background: isLive ? '#6FFF00' : 'rgba(255,255,255,0.3)', animation: isLive ? 'pulse-dot 2s ease-in-out infinite' : 'none' }} />
+              <span className="font-mono text-[11px] uppercase tracking-widest text-cream/60">
+                {isLive ? (wsRef.current ? 'WEB CALL ACTIVE' : 'CALL IN PROGRESS') : 'NO ACTIVE CALL'}
+              </span>
             </div>
+            {wsRef.current && (
+              <div className="flex items-end justify-between gap-1 w-24 h-5">
+                {bars.map((lvl, i) => (
+                  <div key={i} className="flex-1 rounded-full transition-all duration-75"
+                    style={{
+                      height: `${Math.max(4, lvl * 20)}px`,
+                      background: lvl > 0.05 ? '#6FFF00' : 'rgba(255,255,255,0.1)'
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
-        {/* ═══ RIGHT — Info / Scorecard ═══ */}
-        <aside className="col-span-12 lg:col-span-3 space-y-3 overflow-y-auto scrollbar-hide"
-          style={{ maxHeight: 'calc(100vh - 5rem)' }}>
-
+        {/* ═══ RIGHT PANEL — Info / Scorecard ═══ */}
+        <aside className="col-span-12 lg:col-span-3 flex flex-col overflow-y-auto scrollbar-hide space-y-6">
           {!report ? (
             <>
-              {/* Session info */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<Activity size={12} />}>Session</Label>
-                <div className="mt-3 space-y-3">
-                  <InfoRow label="Status"
-                    value={
-                      isLive  ? <Chip color="emerald">Live</Chip> :
-                      isBusy  ? <Chip color="amber">Connecting</Chip> :
-                      isDone  ? <Chip color="slate">Ended</Chip> :
-                      <span className="text-[11px] text-slate-300">—</span>
-                    } />
-                  {isLive && (
-                    <InfoRow label="Duration"
-                      value={<span className="text-[12px] font-mono font-semibold text-indigo-600 tabular-nums">{fmt(elapsed)}</span>} />
-                  )}
-                  <InfoRow label="Candidate"
-                    value={<span className="text-[12px] font-medium text-slate-600 truncate max-w-[110px]">{name || '—'}</span>} />
-                  <InfoRow label="Channel"
-                    value={<span className="text-[12px] text-slate-500">Outbound</span>} />
+              <div className="liquid-glass rounded-[24px] p-4 lg:p-5">
+                <h3 className="font-grotesk uppercase text-[22px] leading-none mb-4 flex items-center justify-between">
+                  Telemetry <Activity size={18} className="text-neon" />
+                </h3>
+                <div className="space-y-4">
+                  <InfoRow label="Status" value={
+                    isLive ? <span className="px-2 py-0.5 bg-neon/20 text-neon border border-neon/30 rounded-[8px] font-mono text-[10px] uppercase">LIVE</span> :
+                    isBusy ? <span className="px-2 py-0.5 bg-white/10 text-cream border border-white/20 rounded-[8px] font-mono text-[10px] uppercase">CONNECT</span> :
+                    isDone ? <span className="px-2 py-0.5 bg-black/50 text-cream/50 border border-white/10 rounded-[8px] font-mono text-[10px] uppercase">ENDED</span> :
+                    <span className="font-mono text-[11px] text-cream/30">—</span>
+                  } />
+                  {isLive && <InfoRow label="Duration" value={<span className="font-mono text-[13px] text-cream">{fmt(elapsed)}</span>} />}
+                  <InfoRow label="Candidate" value={<span className="font-mono text-[12px] text-cream truncate max-w-[120px]">{name || '—'}</span>} />
+                  <InfoRow label="Engine" value={<span className="font-mono text-[11px] text-cream flex items-center gap-1"><Sparkles size={10} className="text-neon"/> Gemini</span>} />
                 </div>
-              </section>
+              </div>
 
-              {/* Screening goals */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<CheckCircle size={12} />}>Screening Goals</Label>
-                <ul className="mt-3 space-y-2">
-                  {[
-                    'Confirm interest & availability',
-                    'Verify 2–3 key technical skills',
-                    'Capture salary expectation (LPA)',
-                    'Note period / joining date',
-                    'Cultural fit (internal score)',
-                  ].map((item, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[12px] text-slate-500 leading-snug">
-                      <span className="text-indigo-400 mt-[1px] text-[10px] flex-shrink-0">▸</span>
-                      {item}
+              <div className="liquid-glass rounded-[24px] p-4 lg:p-5">
+                <h3 className="font-grotesk uppercase text-[22px] leading-none mb-4 flex items-center justify-between">
+                  Goals <CheckCircle size={18} className="text-neon" />
+                </h3>
+                <ul className="space-y-3">
+                  {['Confirm interest', 'Verify core tech', 'Capture salary', 'Note timeline', 'Assess culture'].map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 font-mono text-[11px] uppercase text-cream/70 leading-snug">
+                      <span className="text-neon mt-[1px] text-[10px] flex-shrink-0">◆</span> {item}
                     </li>
                   ))}
                 </ul>
-              </section>
+              </div>
 
-              {/* Language */}
-              <section className="glass rounded-2xl p-5">
-                <Label icon={<MessageSquare size={12} />}>Languages</Label>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {['English', 'Hindi', 'Hinglish'].map((l) => (
-                    <span key={l} className="text-[11px] font-semibold px-3 py-1 rounded-lg"
-                      style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.16)', color: '#4f46e5' }}>
-                      {l}
-                    </span>
-                  ))}
+              <Link to="/dashboard" className="liquid-glass rounded-[24px] p-4 lg:p-5 flex items-center justify-between group hover:border-neon/30 border border-white/10 transition-colors">
+                <div>
+                  <p className="font-mono text-[10px] text-cream/50 uppercase tracking-widest mb-1">Analytics</p>
+                  <p className="font-grotesk text-[18px] uppercase text-cream group-hover:text-neon transition-colors">View Dashboard</p>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-2.5 leading-relaxed">
-                  Vox mirrors the candidate's language — powered by Gemini Live.
-                </p>
-              </section>
+                <div className="w-10 h-10 rounded-[14px] bg-neon/10 border border-neon/20 flex items-center justify-center group-hover:bg-neon/20 transition-colors">
+                  <BarChart3 size={18} className="text-neon" />
+                </div>
+              </Link>
             </>
           ) : (
             <Scorecard report={report} name={name} />
           )}
         </aside>
       </main>
-    </div>
-  );
-}
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-function Label({ icon, children }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-indigo-500">{icon}</span>
-      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">{children}</span>
+      {/* ── Toast Notification ── */}
+      {toast && (
+        <div className="fixed bottom-8 right-8 z-50 animate-toast">
+          <div className={`px-5 py-3.5 flex items-center gap-3 rounded-[16px] liquid-glass border ${
+            toast.type === 'error' ? 'border-red-500/50 text-red-400' : 'border-neon/50 text-neon'
+          }`}>
+            {toast.type === 'error' ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
+            <span className="font-mono text-[12px] uppercase">{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-3 opacity-50 hover:opacity-100 transition-opacity">✕</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function InfoRow({ label, value }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-slate-400 flex-shrink-0">{label}</span>
-      <span>{value}</span>
+    <div className="flex items-center justify-between gap-4">
+      <span className="font-mono text-[11px] uppercase text-cream/50 flex-shrink-0">{label}</span>
+      <div className="text-right">{value}</div>
     </div>
   );
 }
-
-function Chip({ color = 'slate', children }) {
-  const map = {
-    emerald: { bg: '#f0fdf4', bd: '#bbf7d0', tx: '#16a34a' },
-    amber:   { bg: '#fffbeb', bd: '#fde68a', tx: '#b45309' },
-    rose:    { bg: '#fff1f2', bd: '#fecdd3', tx: '#e11d48' },
-    slate:   { bg: '#f8fafc', bd: '#e2e8f0', tx: '#64748b' },
-    indigo:  { bg: '#eef2ff', bd: '#c7d2fe', tx: '#4f46e5' },
-  };
-  const s = map[color] || map.slate;
-  return (
-    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md"
-      style={{ background: s.bg, border: `1px solid ${s.bd}`, color: s.tx }}>
-      {children}
-    </span>
-  );
-}
-
-// ── Engagement config ───────────────────────────────────────────────────────
-const ENGAGEMENT = {
-  high:   { label: 'High',   bg: 'rgba(5,150,105,0.08)',  bd: 'rgba(5,150,105,0.22)',  tx: '#065f46', dot: '#059669' },
-  medium: { label: 'Medium', bg: 'rgba(245,158,11,0.08)', bd: 'rgba(245,158,11,0.22)', tx: '#78350f', dot: '#d97706' },
-  low:    { label: 'Low',    bg: 'rgba(239,68,68,0.08)',  bd: 'rgba(239,68,68,0.22)',  tx: '#7f1d1d', dot: '#dc2626' },
-};
-
-const ALL_CHECKPOINTS = [
-  'greeting', 'recruiter-intro', 'candidate-intro', 'technical-screening',
-  'work-mode', 'compensation', 'role-alignment', 'availability',
-];
-const CP_LABELS = {
-  'greeting':            'Greeting',
-  'recruiter-intro':     'Intro',
-  'candidate-intro':     'Background',
-  'technical-screening': 'Technical',
-  'work-mode':           'Work Mode',
-  'compensation':        'Compensation',
-  'role-alignment':      'Role Fit',
-  'availability':        'Notice / Joining',
-};
-
-// ── Compatibility config ────────────────────────────────────────────────────
-const COMPAT = {
-  green:  { dot: '🟢', label: 'Strong Match',    bg: 'rgba(5,150,105,0.07)',  bd: 'rgba(5,150,105,0.22)',  tx: '#065f46', hd: '#059669' },
-  yellow: { dot: '🟡', label: 'Partial Match',   bg: 'rgba(245,158,11,0.07)', bd: 'rgba(245,158,11,0.22)', tx: '#78350f', hd: '#d97706' },
-  red:    { dot: '🔴', label: 'Weak Match',       bg: 'rgba(239,68,68,0.07)',  bd: 'rgba(239,68,68,0.22)',  tx: '#7f1d1d', hd: '#dc2626' },
-};
-const RECOMMEND = {
-  shortlist: { label: 'Shortlist',    bg: 'rgba(5,150,105,0.10)',  bd: 'rgba(5,150,105,0.30)',  tx: '#065f46' },
-  hold:      { label: 'Hold',         bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', tx: '#78350f' },
-  reject:    { label: 'Reject',       bg: 'rgba(239,68,68,0.10)',  bd: 'rgba(239,68,68,0.30)',  tx: '#7f1d1d' },
-};
 
 function Scorecard({ report, name }) {
   const [copied, setCopied] = useState(false);
@@ -813,9 +716,6 @@ function Scorecard({ report, name }) {
   const OutIcon = outcome.Icon;
   const score   = typeof report.score === 'number' ? report.score : null;
   const conf    = report.overall_confidence;
-  const cs      = report.candidate_summary || null;
-  const compat  = cs ? (COMPAT[cs.compatibility_level] || COMPAT.yellow) : null;
-  const rec     = cs ? (RECOMMEND[cs.recommendation] || RECOMMEND.hold) : null;
 
   const handleExport = () => {
     navigator.clipboard.writeText(buildExportText(report, name))
@@ -828,390 +728,146 @@ function Scorecard({ report, name }) {
     || report.notice_period_days != null || report.joining_timeline || report.other_offers != null;
 
   return (
-    <div className="space-y-3" style={{ animation: 'scoreDrop 0.35s ease-out' }}>
+    <div className="liquid-glass rounded-[32px] overflow-hidden">
+      <div className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
+        <h3 className="font-grotesk uppercase text-[22px] leading-none">
+          Report
+        </h3>
+        <button onClick={handleExport}
+          className="flex items-center gap-1.5 font-mono text-[10px] uppercase px-3 py-1.5 rounded-[8px] transition-all border"
+          style={{ background: copied ? 'rgba(111,255,0,0.1)' : 'rgba(255,255,255,0.05)', borderColor: copied ? 'rgba(111,255,0,0.3)' : 'rgba(255,255,255,0.1)', color: copied ? '#6FFF00' : '#EFF4FF' }}>
+          <Copy size={12} /> {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
 
-      {/* ── Candidate Compatibility Summary ── */}
-      {cs && compat && (
-        <section className="rounded-2xl p-5" style={{ background: compat.bg, border: `1.5px solid ${compat.bd}` }}>
-
-          {/* Header row */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[18px] leading-none">{compat.dot}</span>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: compat.hd }}>
-                  {compat.label}
-                </p>
-                <p className="text-[10px] font-medium mt-0.5" style={{ color: compat.tx }}>
-                  {cs.compatibility_reason}
-                </p>
-              </div>
-            </div>
-            {rec && (
-              <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg border flex-shrink-0"
-                style={{ background: rec.bg, borderColor: rec.bd, color: rec.tx }}>
-                {rec.label}
-              </span>
-            )}
-          </div>
-
-          {/* Summary bullets */}
-          {cs.summary_bullets?.length > 0 && (
-            <ul className="space-y-1 mb-3">
-              {cs.summary_bullets.map((b, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: compat.tx }}>
-                  <span className="flex-shrink-0 mt-[2px] opacity-60">·</span>{b}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Match / Gap columns */}
-          {(cs.match_points?.length > 0 || cs.gap_points?.length > 0) && (
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              {cs.match_points?.length > 0 && (
-                <div className="rounded-xl p-2.5" style={{ background: 'rgba(5,150,105,0.10)', border: '1px solid rgba(5,150,105,0.20)' }}>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700 mb-1.5">Matches</p>
-                  <ul className="space-y-1">
-                    {cs.match_points.slice(0, 4).map((m, i) => (
-                      <li key={i} className="text-[10px] text-emerald-800 leading-snug flex gap-1">
-                        <span className="flex-shrink-0">✓</span>{m}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {cs.gap_points?.length > 0 && (
-                <div className="rounded-xl p-2.5" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }}>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-red-700 mb-1.5">Gaps</p>
-                  <ul className="space-y-1">
-                    {cs.gap_points.slice(0, 4).map((g, i) => (
-                      <li key={i} className="text-[10px] text-red-800 leading-snug flex gap-1">
-                        <span className="flex-shrink-0">✗</span>{g}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Missing skills */}
-          {cs.missing_skills?.length > 0 && (
-            <div className="mt-3">
-              <p className="text-[9px] font-bold uppercase tracking-wider mb-1.5" style={{ color: compat.hd }}>
-                Missing Skills
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {cs.missing_skills.map((s, i) => (
-                  <span key={i} className="text-[10px] font-semibold px-2 py-0.5 rounded-md"
-                    style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.22)', color: '#b91c1c' }}>
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Red flags */}
-          {cs.red_flags?.length > 0 && (
-            <div className="mt-3 space-y-1">
-              {cs.red_flags.map((f, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[10px] font-medium" style={{ color: '#b91c1c' }}>
-                  <AlertTriangle size={10} className="flex-shrink-0 mt-[1px]" />
-                  {f}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {cs.recommendation_reason && (
-            <p className="text-[10px] italic mt-3 opacity-70" style={{ color: compat.tx }}>
-              {cs.recommendation_reason}
-            </p>
-          )}
-        </section>
-      )}
-
-      {/* ── Hero ── */}
-      <section className="glass rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-4">
-          <Label icon={<Activity size={12} />}>Screening Report</Label>
-          <button onClick={handleExport}
-            className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg transition-all"
-            style={{ background: copied ? 'rgba(16,185,129,0.10)' : 'rgba(99,102,241,0.08)',
-                     border: `1px solid ${copied ? 'rgba(16,185,129,0.25)' : 'rgba(99,102,241,0.18)'}`,
-                     color: copied ? '#059669' : '#6366f1' }}>
-            <Copy size={10} />
-            {copied ? 'Copied!' : 'Export'}
-          </button>
-        </div>
-
-        <div className="flex items-start gap-4 mb-4">
-          {/* Score */}
-          <div className="w-[72px] h-[72px] flex-shrink-0 rounded-2xl flex flex-col items-center justify-center"
-            style={{ background: scoreBg(score), border: `1.5px solid ${scoreBd(score)}` }}>
-            <span className="text-[30px] font-black leading-none" style={{ color: scoreColor(score) }}>
+      <div className="p-6 space-y-8">
+        <div className="flex items-center gap-5">
+          <div className="w-[84px] h-[84px] flex-shrink-0 rounded-[24px] flex flex-col items-center justify-center bg-white/5 border border-white/10">
+            <span className="font-grotesk text-[48px] leading-none text-cream">
               {score ?? '—'}
             </span>
-            <span className="text-[9px] text-slate-400 font-semibold mt-0.5">/10</span>
+            <span className="font-mono text-[9px] text-cream/40 uppercase mt-1">/10 Score</span>
           </div>
-
           <div className="flex-1 min-w-0 space-y-2">
             <div>
-              <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Call Outcome</p>
-              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${outcome.cls}`}>
-                <OutIcon size={11} />
-                {outcome.label}
+              <p className="font-mono text-[10px] text-cream/50 mb-1.5 uppercase">Outcome</p>
+              <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[12px] border font-mono text-[11px] uppercase ${outcome.cls.includes('emerald') ? 'text-neon bg-neon/10 border-neon/30' : outcome.cls.includes('red') ? 'text-red-400 bg-red-500/10 border-red-500/30' : 'text-cream bg-white/5 border-white/10'}`}>
+                <OutIcon size={12} /> {outcome.label}
               </div>
             </div>
             {conf != null && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-[6px] h-[6px] rounded-full flex-shrink-0"
-                  style={{ background: confColor(conf) }} />
-                <span className="text-[10px] font-semibold" style={{ color: confColor(conf) }}>
-                  {confLabel(conf)} Confidence
+              <div className="flex items-center gap-1.5 mt-2">
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-neon" />
+                <span className="font-mono text-[9px] uppercase text-cream/70">
+                  {confLabel(conf)} Conf <span className="text-cream/40">({Math.round(conf * 100)}%)</span>
                 </span>
-                <span className="text-[10px] text-slate-400">({Math.round(conf * 100)}%)</span>
               </div>
             )}
           </div>
         </div>
 
         {report.vibe_check && (
-          <blockquote className="text-[12px] text-slate-500 italic leading-relaxed border-l-2 pl-3 mt-1"
-            style={{ borderColor: 'rgba(99,102,241,0.30)' }}>
+          <div className="p-4 rounded-[16px] bg-white/5 border border-white/10 font-mono text-[12px] italic text-cream/80 leading-relaxed">
             "{report.vibe_check}"
-          </blockquote>
+          </div>
         )}
-      </section>
 
-      {/* ── Evaluation Dimensions ── */}
-      {hasDimensions && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<TrendingUp size={12} />}>Evaluation Dimensions</Label>
-          <div className="grid grid-cols-2 gap-2 mt-3">
-            {DIMS.map(({ key, label, Icon: DimIcon, color, bg, bd }) => {
-              const dim = report[key];
-              if (!dim) return null;
-              return (
-                <div key={key} className="rounded-xl p-3" style={{ background: bg, border: `1px solid ${bd}` }}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-1">
-                      <DimIcon size={9} style={{ color }} />
-                      <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color }}>
-                        {label}
-                      </span>
-                    </div>
-                    <span className="text-[18px] font-black leading-none" style={{ color }}>
-                      {dim.score}
-                    </span>
-                  </div>
-                  <div className="h-[3px] rounded-full mb-2" style={{ background: 'rgba(0,0,0,0.08)' }}>
-                    <div className="h-full rounded-full transition-all"
-                      style={{ width: `${Math.round((dim.confidence ?? 0) * 100)}%`, background: color, opacity: 0.65 }} />
-                  </div>
-                  {dim.evidence?.[0] && (
-                    <p className="text-[10px] text-slate-500 leading-snug line-clamp-2">
-                      "{dim.evidence[0]}"
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* ── Key Metrics ── */}
-      {hasMetrics && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<Activity size={12} />}>Key Metrics</Label>
-          <div className="grid grid-cols-2 gap-2 mt-3">
-            {report.salary_expectation_lpa != null && (
-              <MetricTile label="Expected CTC" value={`${report.salary_expectation_lpa} LPA`} />
-            )}
-            {report.current_ctc_lpa != null && (
-              <MetricTile label="Current CTC" value={`${report.current_ctc_lpa} LPA`} />
-            )}
-            {report.notice_period_days != null && (
-              <MetricTile label="Notice" value={`${report.notice_period_days} days`} />
-            )}
-            {report.other_offers != null && (
-              <MetricTile label="Other Offers" value={report.other_offers ? 'Yes ⚡' : 'No'} />
-            )}
-            {report.joining_timeline && (
-              <MetricTile label="Joining" value={report.joining_timeline} wide />
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* ── Verified Skills ── */}
-      {report.skills_verified?.length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<CheckCircle size={12} />}>Verified Skills</Label>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {report.skills_verified.map((s, i) => (
-              <span key={i} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg"
-                style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#059669' }}>
-                {s}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ── Summary ── */}
-      {report.summary_bullets?.length > 0 && (
-        <section className="glass rounded-2xl p-5">
-          <Label icon={<MessageSquare size={12} />}>Summary</Label>
-          <ul className="space-y-2 mt-3">
-            {report.summary_bullets.map((b, i) => (
-              <li key={i} className="flex items-start gap-2 text-[12px] text-slate-600 leading-relaxed">
-                <span className="text-indigo-400 mt-0.5 flex-shrink-0">·</span>
-                {b}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ── Engagement Analysis ── */}
-      {(() => {
-        const level  = report.engagement_level;
-        const eng    = level ? (ENGAGEMENT[level] || ENGAGEMENT.medium) : null;
-        const tones  = report.tone_signals || [];
-        const cps    = report.checkpoints_completed || [];
-        const pos    = report.interest_indicators || [];
-        const neg    = report.concern_indicators || [];
-        if (!eng && !tones.length && !cps.length && !pos.length && !neg.length) return null;
-        return (
-          <section className="glass rounded-2xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <Label icon={<Activity size={12} />}>Engagement Analysis</Label>
-              {eng && (
-                <span className="flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg border"
-                  style={{ background: eng.bg, borderColor: eng.bd, color: eng.tx }}>
-                  <span className="w-[6px] h-[6px] rounded-full flex-shrink-0" style={{ background: eng.dot }} />
-                  {eng.label} Engagement
-                </span>
-              )}
+        <div className="space-y-6">
+          {report.summary_bullets?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Summary</p>
+              <ul className="space-y-2">
+                {report.summary_bullets.map((b, i) => (
+                  <li key={i} className="flex items-start gap-2.5 font-mono text-[11px] text-cream/80 leading-relaxed">
+                    <span className="text-neon mt-[2px] flex-shrink-0 text-[10px]">■</span> {b}
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
 
-            {/* Checkpoints */}
-            {cps.length > 0 && (
-              <div className="mb-3">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                  Checkpoints Covered ({cps.length}/{ALL_CHECKPOINTS.length})
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {ALL_CHECKPOINTS.map(cp => {
-                    const done = cps.includes(cp);
-                    return (
-                      <span key={cp} className="text-[9px] font-semibold px-2 py-0.5 rounded-md"
-                        style={done
-                          ? { background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.25)', color: '#4f46e5' }
-                          : { background: 'rgba(15,23,42,0.04)', border: '1px solid rgba(15,23,42,0.08)', color: '#cbd5e1' }}>
-                        {done ? '✓ ' : ''}{CP_LABELS[cp]}
-                      </span>
-                    );
-                  })}
-                </div>
+          {hasMetrics && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Metrics</p>
+              <div className="grid grid-cols-2 gap-3">
+                {report.salary_expectation_lpa != null && <MetricTile label="Exp CTC" value={`${report.salary_expectation_lpa} LPA`} />}
+                {report.current_ctc_lpa != null        && <MetricTile label="Cur CTC" value={`${report.current_ctc_lpa} LPA`} />}
+                {report.notice_period_days != null     && <MetricTile label="Notice" value={`${report.notice_period_days} Days`} />}
+                {report.joining_timeline               && <MetricTile label="Joining" value={report.joining_timeline} wide />}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Interest + Concern columns */}
-            {(pos.length > 0 || neg.length > 0) && (
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                {pos.length > 0 && (
-                  <div className="rounded-xl p-2.5" style={{ background: 'rgba(5,150,105,0.07)', border: '1px solid rgba(5,150,105,0.18)' }}>
-                    <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700 mb-1.5">Interest</p>
-                    <ul className="space-y-1">
-                      {pos.slice(0, 4).map((s, i) => (
-                        <li key={i} className="text-[10px] text-emerald-800 leading-snug flex gap-1">
-                          <span className="flex-shrink-0">+</span>{s}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {neg.length > 0 && (
-                  <div className="rounded-xl p-2.5" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.18)' }}>
-                    <p className="text-[9px] font-bold uppercase tracking-wider text-amber-700 mb-1.5">Concerns</p>
-                    <ul className="space-y-1">
-                      {neg.slice(0, 4).map((s, i) => (
-                        <li key={i} className="text-[10px] text-amber-800 leading-snug flex gap-1">
-                          <span className="flex-shrink-0">!</span>{s}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+          {hasDimensions && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Dimensions</p>
+              <div className="space-y-2.5">
+                {DIMS.map(d => {
+                  const dim = report[d.key];
+                  if (!dim) return null;
+                  const DIcon = d.Icon;
+                  return (
+                    <div key={d.key} className="flex flex-col gap-2 p-3 rounded-[16px] border border-white/10 bg-white/5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <DIcon size={12} className="text-cream/50" />
+                          <span className="font-mono text-[10px] uppercase text-cream/80">{d.label}</span>
+                        </div>
+                        <span className="font-mono text-[11px] text-neon">{dim.score}/10</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden">
+                        <div className="h-full bg-neon rounded-full" style={{ width: `${(dim.score / 10) * 100}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Tone signals */}
-            {tones.length > 0 && (
-              <div>
-                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Tone Signals</p>
-                <ul className="space-y-1">
-                  {tones.slice(0, 4).map((t, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-500 leading-snug">
-                      <span className="text-indigo-400 flex-shrink-0 mt-[1px]">·</span>{t}
-                    </li>
-                  ))}
-                </ul>
+          {report.skills_verified?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-cream/50 uppercase mb-3">Skills Verified</p>
+              <div className="flex flex-wrap gap-2">
+                {report.skills_verified.map((s, i) => (
+                  <span key={i} className="font-mono text-[10px] px-3 py-1.5 rounded-[10px] bg-neon/10 border border-neon/20 text-neon uppercase">{s}</span>
+                ))}
               </div>
-            )}
-          </section>
-        );
-      })()}
+            </div>
+          )}
 
-      {/* ── Recommended Action ── */}
-      {report.recommended_next_step && (
-        <section className="rounded-2xl p-4"
-          style={{ background: 'rgba(238,242,255,0.90)', border: '1px solid rgba(99,102,241,0.22)' }}>
-          <div className="flex items-center gap-1.5 mb-2">
-            <Zap size={11} className="text-indigo-500" fill="currentColor" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-indigo-600">
-              Recommended Action
-            </span>
-          </div>
-          <p className="text-[12px] text-indigo-900 leading-relaxed font-medium">
-            {report.recommended_next_step}
-          </p>
-        </section>
-      )}
+          {report.recommended_next_step && (
+            <div className="p-4 rounded-[16px] bg-neon/5 border border-neon/20">
+              <p className="font-mono text-[10px] text-neon uppercase mb-2 flex items-center gap-1.5">
+                <Zap size={10} /> Recommended Action
+              </p>
+              <p className="font-mono text-[12px] text-cream/80 leading-relaxed">{report.recommended_next_step}</p>
+            </div>
+          )}
 
-      {/* ── HR Flags ── */}
-      {report.hr_flags?.length > 0 && (
-        <section className="glass rounded-2xl p-5"
-          style={{ background: 'rgba(255,251,235,0.85)', borderColor: 'rgba(251,191,36,0.25)' }}>
-          <div className="flex items-center gap-1.5 mb-3">
-            <AlertTriangle size={12} className="text-amber-500" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-amber-600">HR Flags</span>
-          </div>
-          <ul className="space-y-2">
-            {report.hr_flags.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-[12px] text-amber-700 leading-relaxed">
-                <span className="flex-shrink-0 mt-0.5">·</span>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+          {report.hr_flags?.length > 0 && (
+            <div>
+              <p className="font-mono text-[10px] text-red-400 uppercase mb-3">HR Flags</p>
+              <ul className="space-y-2">
+                {report.hr_flags.map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 font-mono text-[11px] text-red-400 bg-red-500/10 px-3 py-2 rounded-[12px] border border-red-500/20">
+                    <span className="text-red-500 mt-[1px] flex-shrink-0">⚠</span> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function MetricTile({ label, value, wide }) {
   return (
-    <div className={`rounded-xl p-3 ${wide ? 'col-span-2' : ''}`}
-      style={{ background: 'rgba(248,250,252,0.9)', border: '1px solid rgba(15,23,42,0.08)' }}>
-      <p className="text-[10px] text-slate-400 mb-0.5 font-medium">{label}</p>
-      <p className="text-[13px] font-bold text-slate-800">{value}</p>
+    <div className={`p-3 rounded-[16px] bg-white/5 border border-white/10 ${wide ? 'col-span-2' : ''}`}>
+      <p className="font-mono text-[9px] text-cream/50 mb-1 uppercase">{label}</p>
+      <p className="font-mono text-[12px] text-cream truncate">{value}</p>
     </div>
   );
 }

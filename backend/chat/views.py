@@ -434,6 +434,79 @@ def call_status_webhook(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+def list_sessions(request):
+    """GET /api/sessions/ — return an analytics-aware list of past candidate calls."""
+    from .models import CallSession
+
+    try:
+        sessions = CallSession.objects.all().order_by("-created_at")
+    except Exception:
+        return JsonResponse({"status": "error", "message": "DB unavailable"}, status=500)
+
+    outcome_counts = {}
+    compatibility_counts = {}
+    total_score = 0
+    score_count = 0
+    total_confidence = 0.0
+    confidence_count = 0
+    payload = []
+
+    for session in sessions:
+        outcome = session.call_outcome or "unknown"
+        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+
+        compatibility = (
+            (session.candidate_summary or {}).get("compatibility_level")
+            if isinstance(session.candidate_summary, dict)
+            else None
+        ) or "unknown"
+        compatibility_counts[compatibility] = compatibility_counts.get(compatibility, 0) + 1
+
+        if session.intent_score is not None:
+            total_score += session.intent_score
+            score_count += 1
+
+        if session.eval_confidence is not None:
+            total_confidence += session.eval_confidence
+            confidence_count += 1
+
+        payload.append({
+            "call_sid": session.call_sid,
+            "candidate_name": session.candidate_name,
+            "candidate_phone": session.candidate_phone,
+            "job_description": session.job_description,
+            "resume_text": session.resume_text,
+            "summary": session.summary,
+            "intent_score": session.intent_score,
+            "call_outcome": session.call_outcome,
+            "call_channel": session.call_channel,
+            "created_at": session.created_at.isoformat(),
+            "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+            "notes": session.notes,
+            "candidate_summary": session.candidate_summary,
+            "eval_confidence": session.eval_confidence,
+            "dimension_scores": session.dimension_scores,
+            "eval_reasoning": session.eval_reasoning,
+            "transcript_length": len(session.transcript or []),
+            "transcript": session.transcript,
+        })
+
+    average_score = round(total_score / score_count, 1) if score_count else None
+    average_confidence = round(total_confidence / confidence_count, 2) if confidence_count else None
+
+    return JsonResponse({
+        "status": "success",
+        "total_sessions": len(payload),
+        "outcome_counts": outcome_counts,
+        "compatibility_counts": compatibility_counts,
+        "average_score": average_score,
+        "average_confidence": average_confidence,
+        "sessions": payload,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
 def session_status(request, call_sid: str):
     """
     GET /api/session/<call_sid>/ — poll for post-call evaluation results.
