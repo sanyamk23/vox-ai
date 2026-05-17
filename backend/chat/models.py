@@ -33,6 +33,10 @@ class CallSession(models.Model):
         blank=True, default='',
         help_text="EvaluationAgent reasoning for the intent score and outcome"
     )
+    candidate_summary = models.JSONField(
+        null=True, blank=True,
+        help_text="Compatibility summary from SummaryAgent (green/yellow/red)"
+    )
 
     class Meta:
         ordering = ['-created_at']

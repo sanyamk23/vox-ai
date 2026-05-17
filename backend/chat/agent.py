@@ -296,6 +296,7 @@ async def finalize_gemini_session(
     ]
 
     from .agents.evaluator import EvaluationAgent
+    from .agents.summary_agent import SummaryAgent
     from .agents.schemas import InterviewContext
     from .gemini_recruiter import _gemini_api_key
     from google import genai
@@ -320,6 +321,14 @@ async def finalize_gemini_session(
 
         report = await evaluator.run_with_guardrails(chat_transcript, {}, context)
         report_dict = report.to_dict()
+
+        # Run SummaryAgent — evaluate candidate vs role requirements
+        summarizer = SummaryAgent(gemini_client=client)
+        summarizer.timeout_seconds = 10.0
+        summarizer.max_retries = 0
+        candidate_summary = await summarizer.run_with_guardrails(context, report, resume_text)
+        summary_dict = candidate_summary.to_dict()
+        report_dict["candidate_summary"] = summary_dict
 
         summary_text = "\n".join(report.summary_bullets)
         dim_scores = {
@@ -347,11 +356,12 @@ async def finalize_gemini_session(
             dimension_scores=dim_scores,
             eval_confidence=report.overall_confidence,
             eval_reasoning=report.reasoning,
+            candidate_summary=summary_dict,
         )
         print(
             f"[Vox] Session saved — Score:{report.intent_score} "
             f"Outcome:{report.call_outcome} "
-            f"Confidence:{report.overall_confidence:.2f} "
+            f"Compat:{candidate_summary.compatibility_level.upper()} "
             f"Evaluator:{report.evaluator_status}"
         )
         await consumer.send_recap(report.intent_score, json.dumps(report_dict))

@@ -8,7 +8,8 @@ from google import genai
 
 from .recruiter import RecruiterAgent
 from .evaluator import EvaluationAgent
-from .schemas import InterviewContext, EvalReport
+from .summary_agent import SummaryAgent
+from .schemas import CandidateSummary, InterviewContext, EvalReport
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,29 @@ class AgentManager:
         report: EvalReport = await evaluator.run_with_guardrails(transcript, live_notes, context)
         self._log_agent("evaluator")
         return report
+
+    # ------------------------------------------------------------------
+    # Phase 3b — Candidate summary (runs after evaluate_session)
+    # ------------------------------------------------------------------
+
+    async def summarize_candidate(
+        self,
+        context: InterviewContext,
+        report: EvalReport,
+        resume_text: str = "",
+    ) -> CandidateSummary:
+        """
+        Evaluate candidate compatibility against recruiter requirements.
+        Guaranteed to return — falls back to a yellow CandidateSummary if agent fails.
+        """
+        summarizer = SummaryAgent(gemini_client=self._gemini_client)
+        self._agents["summary"] = summarizer
+
+        summary: CandidateSummary = await summarizer.run_with_guardrails(
+            context, report, resume_text
+        )
+        self._log_agent("summary")
+        return summary
 
     # ------------------------------------------------------------------
     # Health & observability

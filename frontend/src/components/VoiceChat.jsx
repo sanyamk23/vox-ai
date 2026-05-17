@@ -118,6 +118,7 @@ export default function VoiceChat() {
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
+  const pollRef      = useRef(null);
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
 
@@ -170,6 +171,27 @@ export default function VoiceChat() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
+  const _startPolling = useCallback((callSid) => {
+    clearInterval(pollRef.current);
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // 5 minutes at 5s intervals
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
+      try {
+        const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
+        if (r.status === 202) return; // still pending
+        const data = await r.json();
+        if (data.status === 'complete') {
+          clearInterval(pollRef.current);
+          const reason = JSON.stringify({ ...(data.notes || {}), candidate_summary: data.candidate_summary });
+          setRecap({ score: data.score, reason });
+          setStatus('ended');
+        }
+      } catch { /* network blip — keep polling */ }
+    }, 5000);
+  }, []);
+
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
     try {
@@ -209,8 +231,11 @@ export default function VoiceChat() {
       });
       const res = await r.json();
       if (res.status === 'success') {
-        setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${res.call_sid}`, time: nowTime() }]);
+        const sid = res.call_sid;
+        setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${sid}`, time: nowTime() }]);
         setStatus('connected');
+        // Poll for evaluation results — backend saves DB record after call ends
+        _startPolling(sid);
       } else { alert(res.message); setStatus('idle'); }
     } catch { alert('Backend unreachable.'); setStatus('idle'); }
   }, [phone, jd, name, resumeText, inputMode, structuredFields]);
@@ -554,7 +579,7 @@ export default function VoiceChat() {
               </button>
             )}
             {(isLive || isDone) && (
-              <button onClick={() => { setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
+              <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
                 className="btn-ghost w-full py-2.5 rounded-xl text-xs font-medium text-slate-500 flex items-center justify-center gap-1.5">
                 ↺ New Session
               </button>
@@ -739,12 +764,27 @@ function Chip({ color = 'slate', children }) {
   );
 }
 
+// ── Compatibility config ────────────────────────────────────────────────────
+const COMPAT = {
+  green:  { dot: '🟢', label: 'Strong Match',    bg: 'rgba(5,150,105,0.07)',  bd: 'rgba(5,150,105,0.22)',  tx: '#065f46', hd: '#059669' },
+  yellow: { dot: '🟡', label: 'Partial Match',   bg: 'rgba(245,158,11,0.07)', bd: 'rgba(245,158,11,0.22)', tx: '#78350f', hd: '#d97706' },
+  red:    { dot: '🔴', label: 'Weak Match',       bg: 'rgba(239,68,68,0.07)',  bd: 'rgba(239,68,68,0.22)',  tx: '#7f1d1d', hd: '#dc2626' },
+};
+const RECOMMEND = {
+  shortlist: { label: 'Shortlist',    bg: 'rgba(5,150,105,0.10)',  bd: 'rgba(5,150,105,0.30)',  tx: '#065f46' },
+  hold:      { label: 'Hold',         bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', tx: '#78350f' },
+  reject:    { label: 'Reject',       bg: 'rgba(239,68,68,0.10)',  bd: 'rgba(239,68,68,0.30)',  tx: '#7f1d1d' },
+};
+
 function Scorecard({ report, name }) {
   const [copied, setCopied] = useState(false);
   const outcome = OUTCOME[report.call_outcome] || OUTCOME.CONFUSED;
   const OutIcon = outcome.Icon;
   const score   = typeof report.score === 'number' ? report.score : null;
   const conf    = report.overall_confidence;
+  const cs      = report.candidate_summary || null;
+  const compat  = cs ? (COMPAT[cs.compatibility_level] || COMPAT.yellow) : null;
+  const rec     = cs ? (RECOMMEND[cs.recommendation] || RECOMMEND.hold) : null;
 
   const handleExport = () => {
     navigator.clipboard.writeText(buildExportText(report, name))
@@ -758,6 +798,109 @@ function Scorecard({ report, name }) {
 
   return (
     <div className="space-y-3" style={{ animation: 'scoreDrop 0.35s ease-out' }}>
+
+      {/* ── Candidate Compatibility Summary ── */}
+      {cs && compat && (
+        <section className="rounded-2xl p-5" style={{ background: compat.bg, border: `1.5px solid ${compat.bd}` }}>
+
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[18px] leading-none">{compat.dot}</span>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: compat.hd }}>
+                  {compat.label}
+                </p>
+                <p className="text-[10px] font-medium mt-0.5" style={{ color: compat.tx }}>
+                  {cs.compatibility_reason}
+                </p>
+              </div>
+            </div>
+            {rec && (
+              <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg border flex-shrink-0"
+                style={{ background: rec.bg, borderColor: rec.bd, color: rec.tx }}>
+                {rec.label}
+              </span>
+            )}
+          </div>
+
+          {/* Summary bullets */}
+          {cs.summary_bullets?.length > 0 && (
+            <ul className="space-y-1 mb-3">
+              {cs.summary_bullets.map((b, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: compat.tx }}>
+                  <span className="flex-shrink-0 mt-[2px] opacity-60">·</span>{b}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Match / Gap columns */}
+          {(cs.match_points?.length > 0 || cs.gap_points?.length > 0) && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {cs.match_points?.length > 0 && (
+                <div className="rounded-xl p-2.5" style={{ background: 'rgba(5,150,105,0.10)', border: '1px solid rgba(5,150,105,0.20)' }}>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700 mb-1.5">Matches</p>
+                  <ul className="space-y-1">
+                    {cs.match_points.slice(0, 4).map((m, i) => (
+                      <li key={i} className="text-[10px] text-emerald-800 leading-snug flex gap-1">
+                        <span className="flex-shrink-0">✓</span>{m}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {cs.gap_points?.length > 0 && (
+                <div className="rounded-xl p-2.5" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)' }}>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-red-700 mb-1.5">Gaps</p>
+                  <ul className="space-y-1">
+                    {cs.gap_points.slice(0, 4).map((g, i) => (
+                      <li key={i} className="text-[10px] text-red-800 leading-snug flex gap-1">
+                        <span className="flex-shrink-0">✗</span>{g}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Missing skills */}
+          {cs.missing_skills?.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[9px] font-bold uppercase tracking-wider mb-1.5" style={{ color: compat.hd }}>
+                Missing Skills
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {cs.missing_skills.map((s, i) => (
+                  <span key={i} className="text-[10px] font-semibold px-2 py-0.5 rounded-md"
+                    style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.22)', color: '#b91c1c' }}>
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Red flags */}
+          {cs.red_flags?.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {cs.red_flags.map((f, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[10px] font-medium" style={{ color: '#b91c1c' }}>
+                  <AlertTriangle size={10} className="flex-shrink-0 mt-[1px]" />
+                  {f}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {cs.recommendation_reason && (
+            <p className="text-[10px] italic mt-3 opacity-70" style={{ color: compat.tx }}>
+              {cs.recommendation_reason}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* ── Hero ── */}
       <section className="glass rounded-2xl p-5">

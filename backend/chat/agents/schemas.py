@@ -70,6 +70,49 @@ class InterviewContext:
 
 
 # ---------------------------------------------------------------------------
+# Post-call: produced by SummaryAgent
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CandidateSummary:
+    """Compatibility evaluation produced by SummaryAgent after the call ends."""
+
+    # Top-level verdict
+    compatibility_level: str = "yellow"    # green / yellow / red
+    compatibility_reason: str = ""         # one sentence explaining WHY
+
+    # Recruiter-facing summary
+    summary_bullets: list[str] = field(default_factory=list)   # 3-5 quick bullets
+    match_points: list[str] = field(default_factory=list)       # what fits the role
+    gap_points: list[str] = field(default_factory=list)         # what's missing / concerning
+
+    # Specific gaps
+    missing_skills: list[str] = field(default_factory=list)
+    red_flags: list[str] = field(default_factory=list)
+
+    # Action
+    recommendation: str = ""               # shortlist / hold / reject
+    recommendation_reason: str = ""
+
+    # Health
+    summary_status: str = "pending"        # pending / completed / fallback_used
+
+    def to_dict(self) -> dict:
+        return {
+            "compatibility_level": self.compatibility_level,
+            "compatibility_reason": self.compatibility_reason,
+            "summary_bullets": self.summary_bullets,
+            "match_points": self.match_points,
+            "gap_points": self.gap_points,
+            "missing_skills": self.missing_skills,
+            "red_flags": self.red_flags,
+            "recommendation": self.recommendation,
+            "recommendation_reason": self.recommendation_reason,
+            "summary_status": self.summary_status,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Post-call: produced by EvaluationAgent
 # ---------------------------------------------------------------------------
 

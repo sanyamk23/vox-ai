@@ -277,3 +277,30 @@ def initiate_call(request):
 
 
 initiate_outgoing_call = outgoing_call
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def session_status(request, call_sid: str):
+    """
+    GET /api/session/<call_sid>/ — poll for post-call evaluation results.
+    Returns 202 while evaluation is still running, 200 when complete.
+    """
+    from .models import CallSession
+
+    try:
+        session = CallSession.objects.filter(call_sid=call_sid).order_by("-created_at").first()
+    except Exception:
+        return JsonResponse({"status": "error", "message": "DB unavailable"}, status=500)
+
+    if not session:
+        return JsonResponse({"status": "pending"}, status=202)
+
+    return JsonResponse({
+        "status": "complete",
+        "score": session.intent_score,
+        "call_outcome": session.call_outcome,
+        "notes": session.notes,
+        "candidate_summary": session.candidate_summary,
+        "eval_confidence": session.eval_confidence,
+    })
