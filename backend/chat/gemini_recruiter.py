@@ -357,6 +357,19 @@ class GeminiLiveBridge:
             ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                # Candidate speech immediately interrupts the bot — critical for realism
+                activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    # Detect speech quickly so the bot stops almost instantly
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    # Don't wait too long after candidate pauses before responding
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
+                    prefix_padding_ms=100,
+                    silence_duration_ms=500,
+                ),
+            ),
         )
 
         inbound_resample_state = None
@@ -415,14 +428,14 @@ class GeminiLiveBridge:
                             if not payload:
                                 continue
 
-                            # Buffer 100ms (5 * 160 bytes) of mulaw to reduce network overhead
+                            # Buffer 40ms (2 * 160 bytes) — smaller buffer = faster interruption detection
                             mulaw_chunk = base64.b64decode(payload)
                             if not hasattr(self, '_audio_buffer'):
                                 self._audio_buffer = b""
 
                             self._audio_buffer += mulaw_chunk
 
-                            if len(self._audio_buffer) >= 800: # 100ms at 8k mono
+                            if len(self._audio_buffer) >= 320: # 40ms at 8k mono
                                 pcm_8k = audioop.ulaw2lin(self._audio_buffer, 2)
                                 self._audio_buffer = b""
 
