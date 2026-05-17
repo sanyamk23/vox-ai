@@ -218,8 +218,8 @@ class EvaluationAgent(BaseAgent):
             if not isinstance(d, dict):
                 return None
             return EvalDimension(
-                score=int(d.get("score", 5)),
-                confidence=float(d.get("confidence", 0.5)),
+                score=_coerce_int(d.get("score"), 5),
+                confidence=_coerce_float(d.get("confidence"), 0.5),
                 evidence=d.get("evidence") or [],
             )
 
@@ -231,13 +231,13 @@ class EvaluationAgent(BaseAgent):
         engagement = raw_engagement if raw_engagement in ("high", "medium", "low") else "medium"
 
         return EvalReport(
-            intent_score=int(data.get("intent_score", 5)),
+            intent_score=_coerce_int(data.get("intent_score"), 5),
             call_outcome=outcome,
             technical_fit=_dim(data.get("technical_fit")),
             communication=_dim(data.get("communication")),
             motivation_fit=_dim(data.get("motivation_fit")),
             logistics_fit=_dim(data.get("logistics_fit")),
-            overall_confidence=float(data.get("overall_confidence", 0.5)),
+            overall_confidence=_coerce_float(data.get("overall_confidence"), 0.5),
             summary_bullets=data.get("summary_bullets") or [],
             skills_verified=data.get("skills_verified") or [],
             salary_expectation_lpa=_safe_float(data.get("salary_expectation_lpa")),
@@ -348,6 +348,26 @@ def _safe_int(val) -> Optional[int]:
         return int(val) if val is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_int(val, default: int) -> int:
+    """Convert val to int, using default when val is None or non-numeric."""
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(val, default: float) -> float:
+    """Convert val to float, using default when val is None or non-numeric."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
 
 
 def _parse_notice(val: Optional[str]) -> Optional[int]:
