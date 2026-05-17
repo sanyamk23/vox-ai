@@ -371,7 +371,7 @@ class GeminiLiveBridge:
                     # Don't wait too long after candidate pauses before responding
                     end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
                     prefix_padding_ms=100,
-                    silence_duration_ms=500,
+                    silence_duration_ms=800,
                 ),
             ),
         )
