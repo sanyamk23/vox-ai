@@ -40,10 +40,13 @@ class TwilioConsumer(AsyncWebsocketConsumer):
             print("[Twilio] Socket connected successfully.")
 
             params = self._parse_query()
+            raw_qs = self.scope.get("query_string", b"")
+            logger.info("[Twilio] raw_qs=%r params_keys=%s", raw_qs, list(params.keys()))
             session = {}
             token = params.get("token", "")
             if token:
                 session = await sync_to_async(cache.get)(f"vox:{token}") or {}
+                logger.info("[Twilio] cache token=%s session_keys=%s", token, list(session.keys()) if isinstance(session, dict) else type(session).__name__)
                 if not session:
                     logger.warning("[Twilio] Cache miss for token=%s — falling back to query params / defaults", token)
 
