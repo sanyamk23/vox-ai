@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
 
 from google import genai
 from google.genai import types
@@ -153,15 +151,16 @@ class SummaryAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=800,
+                # gemini-2.5-flash thinking burns through the output-token budget
+                # before producing real JSON; disable it for structured-output calls.
+                max_output_tokens=2048,
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
-        raw = (resp.text or "").strip()
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
-
-        data = json.loads(raw)
+        from .evaluator import _parse_llm_json
+        data = _parse_llm_json(resp.text or "")
 
         level = data.get("compatibility_level", "yellow").lower()
         if level not in ("green", "yellow", "red"):

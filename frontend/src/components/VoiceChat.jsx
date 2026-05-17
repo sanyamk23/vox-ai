@@ -125,11 +125,22 @@ export default function VoiceChat() {
   const [dragOver,         setDragOver]        = useState(false);
   const [inputMode,        setInputMode]       = useState('prompt');   // 'prompt' | 'structured'
   const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
+  const [bars,             setBars]            = useState(Array(40).fill(0));
+  const [aiSpeaks,         setAiSpeaks]        = useState(false);
+  const [connectingType,   setConnectingType]  = useState(null);
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
   const pollRef      = useRef(null);
+  const wsRef        = useRef(null);
+  const audioCtxRef  = useRef(null);
+  const procRef      = useRef(null);
+  const streamRef    = useRef(null);
+  const analyserRef  = useRef(null);
+  const rafRef       = useRef(null);
+  const audioQ       = useRef([]);
+  const playing      = useRef(false);
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
 
@@ -210,10 +221,11 @@ export default function VoiceChat() {
     audioQ.current  = [];
     setBars(Array(40).fill(0));
     setAiSpeaks(false);
+    setConnectingType(null);
   }, []);
 
   const startWeb = useCallback(async () => {
-    setStatus('connecting'); setMessages([]); setRecap(null); setElapsed(0);
+    setStatus('connecting'); setConnectingType('web'); setMessages([]); setRecap(null); setElapsed(0);
     try {
       const r = await fetch(`${API_BASE}/api/web-session/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -228,7 +240,7 @@ export default function VoiceChat() {
         ws.onmessage = async (e) => {
           if (typeof e.data === 'string') {
             const d = jsonTry(e.data);
-            if      (d.type === 'ready')      { setStatus('connected'); await startMic(); }
+            if      (d.type === 'ready')      { setStatus('connected'); setConnectingType(null); await startMic(); }
             else if (d.type === 'error')      { alert(d.message || 'Session failed'); cleanup(); setStatus('idle'); }
             else if (d.type === 'transcript') setMessages(prev => [...prev, { role: d.role, text: d.text, time: nowTime() }]);
             else if (d.type === 'interrupt')  { audioQ.current = []; setAiSpeaks(false); }
@@ -307,6 +319,7 @@ export default function VoiceChat() {
 
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
+    setConnectingType('phone');
     try {
       let payload = { phone, name };
 
@@ -349,9 +362,9 @@ export default function VoiceChat() {
         setStatus('connected');
         // Poll for evaluation results — backend saves DB record after call ends
         _startPolling(sid);
-      } else { alert(res.message); setStatus('idle'); }
-    } catch { alert('Backend unreachable.'); setStatus('idle'); }
-  }, [phone, jd, name, resumeText, inputMode, structuredFields]);
+      } else { alert(res.message); setStatus('idle'); setConnectingType(null); }
+    } catch { alert('Backend unreachable.'); setStatus('idle'); setConnectingType(null); }
+  }, [phone, jd, name, inputMode, structuredFields, resumeText, _startPolling]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
@@ -696,13 +709,13 @@ export default function VoiceChat() {
                 <button onClick={startWeb} disabled={isBusy || !name}
                   className="btn-primary flex-1 py-[11px] rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
                   style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                  {isBusy && wsRef.current ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-                  {isBusy && wsRef.current ? 'Connecting…' : 'Start Web Call'}
+                  {isBusy && connectingType === 'web' ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                  {isBusy && connectingType === 'web' ? 'Connecting…' : 'Start Web Call'}
                 </button>
                 <button onClick={triggerCall} disabled={isBusy || !phone || phone === '+91'}
                   title="Trigger Outbound Phone Call"
                   className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 rounded-xl flex items-center justify-center transition-colors">
-                  {isBusy && !wsRef.current ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                  {isBusy && connectingType === 'phone' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
                 </button>
               </div>
             )}
