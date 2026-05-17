@@ -370,8 +370,8 @@ class GeminiLiveBridge:
                     start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
                     # Don't wait too long after candidate pauses before responding
                     end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                    prefix_padding_ms=100,
-                    silence_duration_ms=800,
+                    prefix_padding_ms=0,
+                    silence_duration_ms=150,
                 ),
             ),
         )
@@ -458,14 +458,14 @@ class GeminiLiveBridge:
                             if not payload:
                                 continue
 
-                            # Buffer 40ms (2 * 160 bytes) — smaller buffer = faster interruption detection
+                            # Buffer 20ms (160 bytes) — smaller buffer = faster interruption detection
                             mulaw_chunk = base64.b64decode(payload)
                             if not hasattr(self, '_audio_buffer'):
                                 self._audio_buffer = b""
 
                             self._audio_buffer += mulaw_chunk
 
-                            if len(self._audio_buffer) >= 320: # 40ms at 8k mono
+                            if len(self._audio_buffer) >= 160: # 20ms at 8k mono
                                 pcm_8k = audioop.ulaw2lin(self._audio_buffer, 2)
                                 self._audio_buffer = b""
 
