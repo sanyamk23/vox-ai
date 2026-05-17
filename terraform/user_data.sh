@@ -26,20 +26,30 @@ echo "==> Cloning repository"
 git clone ${repo_url} /app
 cd /app
 
-# NOTE: Terraform substitutes all template placeholders in this file before it
-# runs on the instance. Single-quoted heredoc delimiters (<<'EOF') then tell
-# bash not to do any further $ expansion on the already-literal values.
+# ── Resolve Dynamic sslip.io Domain ───────────────────────────────────────────
+DOMAIN="${domain}"
+if [ "$DOMAIN" = "sslip.io" ] || [ "$DOMAIN" = "yourname.duckdns.org" ] || [ -z "$DOMAIN" ]; then
+    echo "==> Resolving public IP address for sslip.io domain"
+    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+    PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+    if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP=$(curl -s https://api.ipify.org || echo "127.0.0.1")
+    fi
+    DOMAIN="$${PUBLIC_IP//./-}.sslip.io"
+fi
+echo "==> Using domain: $DOMAIN"
 
 echo "==> Writing .env"
+# Strictly quoted heredoc to prevent shell expansion of random characters (like $w) in django_secret_key
 cat > /app/.env <<'ENVEOF'
 # ── Django ────────────────────────────────────────────────────────────────────
 DEBUG=False
 LOG_LEVEL=INFO
 CHAT_LOG_LEVEL=INFO
 DJANGO_SECRET_KEY=${django_secret_key}
-ALLOWED_HOSTS=${domain}
-CSRF_TRUSTED_ORIGINS=https://${domain}
-CORS_ALLOWED_ORIGINS=https://${domain}
+ALLOWED_HOSTS=__DOMAIN__,localhost,127.0.0.1,backend
+CSRF_TRUSTED_ORIGINS=https://__DOMAIN__
+CORS_ALLOWED_ORIGINS=https://__DOMAIN__
 
 # ── Twilio ────────────────────────────────────────────────────────────────────
 TWILIO_ACCOUNT_SID=${twilio_account_sid}
@@ -50,16 +60,18 @@ TWILIO_PHONE_NUMBER=${twilio_phone_number}
 GEMINI_API_KEY=${gemini_api_key}
 
 # ── Public URL (used by backend to build Twilio callback URLs) ────────────────
-PUBLIC_URL=https://${domain}
+PUBLIC_URL=https://__DOMAIN__
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
-VITE_API_BASE_URL=https://${domain}
+VITE_API_BASE_URL=https://__DOMAIN__
 ENVEOF
 
+echo "==> Customizing .env domain"
+sed -i "s/__DOMAIN__/$DOMAIN/g" /app/.env
+
 echo "==> Writing Caddyfile"
-# Routes derived from backend/backend/urls.py and backend/chat/routing.py.
 cat > /app/Caddyfile <<'CADDYEOF'
-${domain} {
+__DOMAIN__ {
     # ── WebSocket paths (Django Channels) ─────────────────────────────────────
     # /ws/voice/         → VoiceConsumer  (browser ↔ backend)
     # /ws/media-stream/  → TwilioConsumer (legacy alias)
@@ -100,6 +112,9 @@ ${domain} {
 }
 CADDYEOF
 
+echo "==> Customizing Caddyfile domain"
+sed -i "s/__DOMAIN__/$DOMAIN/g" /app/Caddyfile
+
 echo "==> Writing docker-compose.override.yml"
 cat > /app/docker-compose.override.yml <<'COMPOSEEOF'
 services:
@@ -132,4 +147,4 @@ docker compose up -d --build
 
 echo "==> All services started."
 echo "    Tail logs : docker compose -f /app/docker-compose.yml logs -f"
-echo "    App URL   : https://${domain}"
+echo "    App URL   : https://$DOMAIN"

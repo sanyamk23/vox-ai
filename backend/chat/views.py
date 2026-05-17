@@ -113,11 +113,12 @@ def _media_stream_path(use_legacy_ws_prefix: bool = False) -> str:
 
 
 def _build_twiml(stream_url: str) -> str:
+    escaped_url = stream_url.replace("&", "&amp;")
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<Response>\n"
         "    <Connect>\n"
-        f'        <Stream url="{stream_url}" />\n'
+        f'        <Stream url="{escaped_url}" />\n'
         "    </Connect>\n"
         "</Response>"
     )
