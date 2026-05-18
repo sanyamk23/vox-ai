@@ -104,6 +104,7 @@ resource "aws_instance" "app" {
   user_data = templatefile("${path.module}/user_data.sh", {
     repo_url            = var.repo_url
     domain              = var.domain
+    duckdns_token       = var.duckdns_token
     twilio_account_sid  = var.twilio_account_sid
     twilio_auth_token   = var.twilio_auth_token
     twilio_phone_number = var.twilio_phone_number

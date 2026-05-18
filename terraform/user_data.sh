@@ -48,18 +48,28 @@ echo "==> Cloning repository"
 git clone ${repo_url} /app
 cd /app
 
-# ── Resolve Dynamic sslip.io Domain ───────────────────────────────────────────
+# ── Resolve Public IP and Configure Domain ────────────────────────────────────
+IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -s https://api.ipify.org || echo "127.0.0.1")
+fi
+
 DOMAIN="${domain}"
-if [ "$DOMAIN" = "sslip.io" ] || [ "$DOMAIN" = "yourname.duckdns.org" ] || [ -z "$DOMAIN" ]; then
-    echo "==> Resolving public IP address for sslip.io domain"
-    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-    PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
-    if [ -z "$PUBLIC_IP" ]; then
-        PUBLIC_IP=$(curl -s https://api.ipify.org || echo "127.0.0.1")
-    fi
+DUCKDNS_TOKEN="${duckdns_token}"
+
+if echo "$DOMAIN" | grep -q '\.duckdns\.org$' && [ -n "$DUCKDNS_TOKEN" ]; then
+    # DuckDNS — extract subdomain and register current IP so HTTPS cert resolves
+    DUCK_SUB=$(echo "$DOMAIN" | sed 's/\.duckdns\.org//')
+    echo "==> Registering $PUBLIC_IP with DuckDNS subdomain $DUCK_SUB"
+    DUCK_RESP=$(curl -s "https://www.duckdns.org/update?domains=$${DUCK_SUB}&token=$${DUCKDNS_TOKEN}&ip=$${PUBLIC_IP}")
+    echo "==> DuckDNS response: $DUCK_RESP"
+elif [ "$DOMAIN" = "sslip.io" ] || [ -z "$DOMAIN" ]; then
+    echo "==> No custom domain — using sslip.io wildcard DNS"
     DOMAIN="$${PUBLIC_IP//./-}.sslip.io"
 fi
-IP_PLAIN=$(echo "$DOMAIN" | sed 's/-/./g' | sed 's/\.sslip\.io//')
+
+IP_PLAIN="$PUBLIC_IP"
 echo "==> Using domain: $DOMAIN  (IP: $IP_PLAIN)"
 
 echo "==> Writing .env"

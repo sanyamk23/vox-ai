@@ -47,3 +47,10 @@ variable "django_secret_key" {
   type        = string
   sensitive   = true
 }
+
+variable "duckdns_token" {
+  description = "DuckDNS token for updating the subdomain IP on instance boot (required when domain ends in .duckdns.org)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
