@@ -785,8 +785,12 @@ def end_call(request, call_sid: str):
         client.calls(call_sid).update(status="completed")
         return JsonResponse({"status": "ok"})
     except Exception as e:
+        err_str = str(e)
         logger.warning("[EndCall] %s: %s", call_sid, e)
-        return JsonResponse({"status": "error", "message": str(e)}, status=500)
+        # Twilio error 20404 = resource not found (bad/expired call_sid)
+        if "20404" in err_str or "not found" in err_str.lower():
+            return JsonResponse({"status": "error", "message": "Call not found"}, status=404)
+        return JsonResponse({"status": "error", "message": "Failed to end call"}, status=500)
 
 
 @csrf_exempt
@@ -812,15 +816,8 @@ def session_status(request, call_sid: str):
     except Exception:
         return JsonResponse({"status": "error", "message": "DB unavailable"}, status=500)
 
-    if session:
-        return JsonResponse({
-            "status": "complete",
-            "score": session.intent_score,
-            "call_outcome": session.call_outcome,
-            "notes": session.notes,
-            "candidate_summary": session.candidate_summary,
-            "eval_confidence": session.eval_confidence,
-        })
+    if not session:
+        return JsonResponse({"status": "not_found"}, status=404)
 
     # Pre-created sessions have ended_at=None — call may still be live.
     if not session.ended_at:
@@ -828,3 +825,12 @@ def session_status(request, call_sid: str):
         if cache.get(f"vox:ended:{call_sid}"):
             return JsonResponse({"status": "evaluating"})
         return JsonResponse({"status": "pending"}, status=202)
+
+    return JsonResponse({
+        "status": "complete",
+        "score": session.intent_score,
+        "call_outcome": session.call_outcome,
+        "notes": session.notes,
+        "candidate_summary": session.candidate_summary,
+        "eval_confidence": session.eval_confidence,
+    })

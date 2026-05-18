@@ -54,6 +54,9 @@ services:
       - "5173:5173"
     env_file:
       - .env
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

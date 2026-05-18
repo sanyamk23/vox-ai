@@ -15,6 +15,13 @@ from chat.views import (
 
 
 def healthcheck(request):
+    # Verify DB is reachable — docker-compose healthcheck depends on this.
+    # A simple SELECT 1 is enough to detect connection failures.
+    try:
+        from django.db import connection
+        connection.ensure_connection()
+    except Exception as exc:
+        return JsonResponse({"status": "error", "detail": "db_unavailable"}, status=503)
     return JsonResponse({"status": "ok"})
 
 
