@@ -92,18 +92,12 @@ def _verify_twilio_signature(request) -> bool:
 def _check_api_key(request) -> bool:
     """
     API key guard for the sessions endpoint (candidate PII lives here).
-    In production (DEBUG=False): VOX_API_KEY must be set — missing key → reject.
-    In development: passes through when VOX_API_KEY is not set.
+    Only enforced when VOX_API_KEY is set — if unset, access is open.
     Key is supplied as X-Vox-Api-Key header or ?api_key= query param.
     """
-    from django.conf import settings as _settings
     required_key = os.getenv("VOX_API_KEY", "").strip()
     if not required_key:
-        if _settings.DEBUG:
-            return True  # Dev mode — open without key
-        else:
-            logger.error("[Security] VOX_API_KEY not set in production — blocking /api/sessions/ access")
-            return False
+        return True  # Key not configured — open access
     provided = (
         request.headers.get("X-Vox-Api-Key", "")
         or request.GET.get("api_key", "")
@@ -434,7 +428,7 @@ async def _precache_interview_context(
         context = await manager.prepare_session(
             jd=jd, candidate_name=name, recruiter_inputs=recruiter_inputs
         )
-        await sync_to_async(cache.set)(f"vox:context:{token}", context.to_dict(), timeout=3600)
+        await sync_to_async(cache.set, thread_sensitive=False)(f"vox:context:{token}", context.to_dict(), timeout=3600)
         logger.info("[Precache] JD context ready token=%s status=%s", token, context.recruiter_status)
     except Exception as exc:
         logger.warning("[Precache] Failed for token=%s: %s", token, exc)
