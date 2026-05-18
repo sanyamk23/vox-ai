@@ -4,6 +4,7 @@ import logging
 import os
 
 import aiohttp
+from urllib.parse import quote
 from google import genai
 from google.genai import types
 
@@ -153,7 +154,7 @@ class RecruiterAgent(BaseAgent):
             return {}
         try:
             timeout = aiohttp.ClientTimeout(total=8)
-            slug = company_name.strip().replace(" ", "_")
+            slug = quote(company_name.strip())
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}"
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:

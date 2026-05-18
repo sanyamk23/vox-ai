@@ -25,8 +25,8 @@ export default function AboutPage() {
       {/* Header */}
       <header className="relative z-40 px-6 sm:px-12 py-6 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-3">
-          <div className="w-6 h-6 rounded flex items-center justify-center bg-gray-900">
-            <Zap size={12} className="text-white" fill="currentColor" />
+          <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-neon">
+            <Zap size={12} className="text-background" fill="currentColor" />
           </div>
           <div className="font-grotesk text-[20px] uppercase tracking-wide">Clarix.Ai</div>
         </Link>
