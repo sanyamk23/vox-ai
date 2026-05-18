@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mail, Twitter, Github, ChevronRight, ArrowRight } from 'lucide-react';
+import { Mail, Twitter, Github, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function LandingPage() {
@@ -128,18 +128,21 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* SECTION 3: TECH / FEATURES GRID */}
+      {/* SECTION 3: TEAM */}
       <section className="relative w-full bg-background py-32">
         <div className="w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
-          
+
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-12 mb-24">
-            <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
-              Intelligence of <br />
-              <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
-                <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Voice</span> AI
-              </div>
-            </h2>
-            
+            <div>
+              <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-neon mb-6">The Builders</p>
+              <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
+                Minds Behind <br />
+                <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
+                  <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Clarix</span> AI
+                </div>
+              </h2>
+            </div>
+
             <Link to="/app" className="group flex flex-col items-center">
               <div className="flex items-center gap-4 hover:opacity-80 transition-opacity">
                 <span className="font-grotesk uppercase text-[32px] sm:text-[48px] lg:text-[64px] leading-none tracking-tighter">LAUNCH</span>
@@ -152,21 +155,31 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <NFTCard 
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
-              label="Real-time Speech"
-              score="8.7/10"
+              index="01"
+              name="Rishabh Tiwari"
+              role="Idea Giver"
             />
-            <NFTCard 
+            <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
-              label="Tone Analysis"
-              score="9.2/10"
+              index="02"
+              name="Prerna Shekhawat"
+              role="Agents Orchestrator"
             />
-            <NFTCard 
+            <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
-              label="Technical Depth"
-              score="8.5/10"
+              index="03"
+              name="Sanyam Kumar"
+              role="Research & Implementation Architect"
+            />
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
+              index="04"
+              name="Ajay Singh Rathore"
+              role="E2E Integration Handler"
+              flip
             />
           </div>
         </div>
@@ -222,29 +235,26 @@ function ResponsiveSocialButton({ icon: Icon, hasBorder }) {
   );
 }
 
-function NFTCard({ videoUrl, label, score }) {
+function TeamCard({ videoUrl, index, name, role, flip = false }) {
   return (
     <div className="liquid-glass rounded-[40px] p-5 hover:bg-white/10 transition-all duration-500 group border border-white/5 shadow-2xl">
       <div className="relative w-full aspect-square rounded-[32px] overflow-hidden bg-black/50">
-        <video 
-          className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+        <video
+          className={`absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700${flip ? ' scale-x-[-1]' : ''}`}
           autoPlay loop muted playsInline
           src={videoUrl}
         />
-        
-        {/* Overlay bar */}
-        <div className="absolute bottom-5 left-5 right-5 liquid-glass rounded-[24px] px-6 py-5 flex items-center justify-between border border-white/10 backdrop-blur-md">
-          <div className="flex flex-col">
-            <span className="font-mono text-[10px] text-cream/50 uppercase tracking-[0.2em] mb-1">{label}</span>
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-[12px] text-cream/60 uppercase">Score</span>
-              <span className="font-mono text-[18px] font-black text-neon">{score}</span>
-            </div>
-          </div>
-          
-          <Link to="/app" className="w-[52px] h-[52px] rounded-full bg-gradient-to-br from-[#b724ff] to-[#7c3aed] flex items-center justify-center shadow-xl shadow-purple-500/40 hover:scale-110 transition-transform">
-            <ChevronRight size={26} className="text-white ml-0.5" />
-          </Link>
+
+        {/* Index badge — top left */}
+        <div className="absolute top-5 left-5 font-mono text-[11px] text-cream/35 uppercase tracking-[0.25em]">
+          {index}
+        </div>
+
+        {/* Name + role overlay — bottom */}
+        <div className="absolute bottom-5 left-5 right-5 liquid-glass rounded-[24px] px-6 py-5 border border-white/10 backdrop-blur-md">
+          <div className="w-7 h-[2px] bg-neon mb-3" />
+          <p className="font-grotesk uppercase text-[15px] sm:text-[17px] leading-tight tracking-tight">{name}</p>
+          <p className="font-mono text-[9px] sm:text-[10px] text-cream/50 uppercase tracking-[0.18em] mt-1.5 leading-relaxed">{role}</p>
         </div>
       </div>
     </div>
