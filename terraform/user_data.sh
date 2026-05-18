@@ -178,15 +178,15 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${CADDY_DATA}:/data
-      - ${CADDY_CONFIG}:/config
+      - $${CADDY_DATA}:/data
+      - $${CADDY_CONFIG}:/config
     depends_on:
       - backend
       - frontend
 
   db:
     volumes:
-      - ${POSTGRES_DATA}:/var/lib/postgresql/data
+      - $${POSTGRES_DATA}:/var/lib/postgresql/data
 
   redis:
     command: redis-server --maxmemory 150mb --maxmemory-policy allkeys-lru
