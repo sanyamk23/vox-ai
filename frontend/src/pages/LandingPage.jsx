@@ -160,25 +160,25 @@ export default function LandingPage() {
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
               index="01"
               name="Rishabh Tiwari"
-              role="Idea Giver"
+              role="Chief Visionary · Origin of the Spark"
             />
             <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
               index="02"
               name="Prerna Shekhawat"
-              role="Agents Orchestrator"
+              role="Neural Conductor · Cognitive Systems"
             />
             <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
               index="03"
-              name="Sanyam Kumar"
-              role="Research & Implementation Architect"
+              name="Sanyam Kumat"
+              role="Deep Intelligence Architect · AI Research"
             />
             <TeamCard
               videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
               index="04"
               name="Ajay Singh Rathore"
-              role="E2E Integration Handler"
+              role="Systems Convergence Commander · Full-Stack"
               flip
             />
           </div>
