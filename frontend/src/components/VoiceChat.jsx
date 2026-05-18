@@ -79,9 +79,17 @@ function buildExportText(report, name) {
   return lines.join('\n');
 }
 
-// ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000')).replace(/\/$/, '');
-const WS_BASE  = API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
+// ── Backend URLs ──────────────────────────────────────────────────────────────
+// VITE_API_BASE_URL overrides (e.g. for ngrok). Otherwise empty = relative paths
+// that Vite's dev-server proxy forwards to the backend container.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+const WS_BASE  = API_BASE
+  ? API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://')
+  : (() => {
+      const p = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const h = typeof window !== 'undefined' ? window.location.host : 'localhost:5173';
+      return `${p}//${h}`;
+    })();
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 const jsonTry = (s) => { try { return JSON.parse(s); } catch { return {}; } };
