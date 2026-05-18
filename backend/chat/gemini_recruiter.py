@@ -487,7 +487,10 @@ class GeminiLiveBridge:
             logger.info("[Gemini] Closing session after delay.")
             self._closed.set()
             if self._mode == "twilio":
-                self._inbound_twilio.put_nowait({"event": "stop"})
+                try:
+                    self._inbound_twilio.put_nowait({"event": "stop"})
+                except asyncio.QueueFull:
+                    pass
                 await self._try_end_call()
 
     async def _max_duration_hangup(self, max_seconds: float) -> None:
@@ -547,7 +550,7 @@ class GeminiLiveBridge:
                     # Detect start of speech quickly so barge-in is responsive
                     start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
                     # MEDIUM avoids triggering on natural mid-sentence pauses
-                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_MEDIUM,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
                     # 100ms buffer catches the very beginning of words
                     prefix_padding_ms=100,
                     # 500ms matches natural inter-sentence pause length on phone calls;
@@ -938,13 +941,19 @@ class GeminiLiveBridge:
             return
         logger.info("[Twilio] Auto-ending call after AI goodbye.")
         self._closed.set()
-        self._inbound_twilio.put_nowait({"event": "stop"})
+        try:
+            self._inbound_twilio.put_nowait({"event": "stop"})
+        except asyncio.QueueFull:
+            pass
         await self._try_end_call()
 
     def close(self) -> None:
         self._closed.set()
         if self._mode == "twilio":
-            self._inbound_twilio.put_nowait({"event": "stop"})
+            try:
+                self._inbound_twilio.put_nowait({"event": "stop"})
+            except asyncio.QueueFull:
+                pass
         if self._goodbye_task and not self._goodbye_task.done():
             self._goodbye_task.cancel()
         if self._close_task and not self._close_task.done():
