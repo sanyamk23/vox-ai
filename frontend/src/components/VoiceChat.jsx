@@ -80,7 +80,7 @@ function buildExportText(report, name) {
 }
 
 // ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000')).replace(/\/$/, '');
 const WS_BASE  = API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export default function VoiceChat() {
 
   if (isLive) {
     return (
-      <CallConsole 
+      <CallConsole
         name={name}
         phone={phone}
         elapsed={elapsed}
@@ -335,14 +335,14 @@ export default function VoiceChat() {
   return (
     <div className="relative min-h-screen bg-background text-cream overflow-hidden font-sans selection:bg-neon selection:text-background">
       {/* Texture Overlay */}
-      <div 
+      <div
         className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
         style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       />
-      
+
       {/* Background Video */}
       <div className="fixed inset-0 z-0 opacity-20">
-        <video 
+        <video
           className="absolute inset-0 w-full h-full object-cover"
           autoPlay loop muted playsInline
           src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
@@ -350,14 +350,14 @@ export default function VoiceChat() {
         <div className="absolute inset-0 bg-background/40" />
       </div>
       {/* Texture Overlay */}
-      <div 
+      <div
         className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
         style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       />
-      
+
       {/* Background Video */}
       <div className="fixed inset-0 z-0 opacity-40">
-        <video 
+        <video
           className="absolute inset-0 w-full h-full object-cover"
           autoPlay loop muted playsInline
           src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4"
@@ -406,7 +406,7 @@ export default function VoiceChat() {
         {/* ═══ LEFT PANEL — Setup ═══ */}
         <aside className="col-span-12 lg:col-span-3 flex flex-col liquid-glass rounded-[32px] overflow-hidden">
           <div className="p-4 lg:p-5 flex-1 overflow-y-auto space-y-6 scrollbar-hide">
-            
+
             <div className="space-y-1">
               <h2 className="font-grotesk uppercase text-[22px] leading-none">Role Info</h2>
               <p className="font-mono text-[11px] text-cream/50 uppercase">Configure AI Parameters</p>
@@ -628,7 +628,7 @@ export default function VoiceChat() {
 
         {/* ═══ CENTER PANEL — Log ═══ */}
         <section className="col-span-12 lg:col-span-6 flex flex-col liquid-glass rounded-[32px] overflow-hidden relative">
-          
+
           <div className="px-8 py-5 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
             <h2 className="font-grotesk uppercase text-[22px] leading-none">Transcript</h2>
             <MessageSquare size={16} className="text-cream/50" />
