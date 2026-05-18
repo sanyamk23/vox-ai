@@ -121,6 +121,8 @@ export default function VoiceChat() {
   const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
   const [connectingType,   setConnectingType]  = useState(null);
   const [toast,            setToast]           = useState(null);
+  const [voices,           setVoices]          = useState([]);
+  const [selectedVoiceId,  setSelectedVoiceId] = useState('');
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
@@ -148,6 +150,19 @@ export default function VoiceChat() {
     }
     return () => clearInterval(timerRef.current);
   }, [status]);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`${API_BASE}/api/voices/`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => {
+        if (!mounted || !d.voices?.length) return;
+        setVoices(d.voices);
+        setSelectedVoiceId(prev => prev || d.voices[0].id);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
 
 
 
@@ -206,15 +221,17 @@ export default function VoiceChat() {
   }, [name, showToast]);
 
   const _startPolling = useCallback((callSid) => {
+    if (!callSid?.trim()) return;
     clearInterval(pollRef.current);
     let attempts = 0;
-    const MAX_ATTEMPTS = 60; // 5 minutes at 5s intervals
+    // 300 attempts × 5s = 25 minutes — covers 20-min call + evaluation time (~30s)
+    const MAX_ATTEMPTS = 300;
     pollRef.current = setInterval(async () => {
       attempts++;
       if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
       try {
         const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
-        if (r.status === 202) return; // call still live
+        if (r.status === 202) return; // call still live — keep polling
         const data = await r.json();
         if (data.status === 'evaluating') {
           // Call has ended — transition UI immediately, keep polling for scorecard
@@ -263,9 +280,10 @@ export default function VoiceChat() {
         if (Object.keys(recruiter_inputs).length) payload.recruiter_inputs = recruiter_inputs;
       }
 
+      const effectiveVoiceId = selectedVoiceId || voices[0]?.id || 'priya';
       const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, resume_text: resumeText }),
+        body: JSON.stringify({ ...payload, resume_text: resumeText, voice_id: effectiveVoiceId }),
       });
       const res = await r.json();
       if (res.status === 'success') {
@@ -277,7 +295,7 @@ export default function VoiceChat() {
         _startPolling(sid);
       } else { alert(res.message); setStatus('idle'); setConnectingType(null); }
     } catch { alert('Backend unreachable.'); setStatus('idle'); setConnectingType(null); }
-  }, [phone, jd, name, inputMode, structuredFields, resumeText, _startPolling]);
+  }, [phone, jd, name, inputMode, structuredFields, resumeText, selectedVoiceId, voices, _startPolling]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
@@ -399,6 +417,35 @@ export default function VoiceChat() {
               <button onClick={() => setInputMode('prompt')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'prompt' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Freeform</button>
               <button onClick={() => setInputMode('structured')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'structured' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Structured</button>
             </div>
+
+            {/* HR Voice Selector */}
+            {voices.length > 0 && (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-neon uppercase tracking-wider flex items-center gap-1.5">
+                  <Mic size={10} /> HR Voice
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {voices.map(v => {
+                    const active = selectedVoiceId === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        disabled={isLive}
+                        onClick={() => setSelectedVoiceId(v.id)}
+                        className={`flex flex-col gap-0.5 p-2.5 rounded-[12px] text-left transition-all border ${
+                          active
+                            ? 'bg-neon/15 border-neon/50 text-cream'
+                            : 'bg-white/5 border-white/10 text-cream/50 hover:bg-white/10 hover:text-cream/80'
+                        }`}
+                      >
+                        <span className={`font-mono text-[11px] uppercase font-semibold ${active ? 'text-neon' : ''}`}>{v.display_name}</span>
+                        <span className="font-mono text-[9px] leading-tight opacity-70">{v.accent}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {inputMode === 'prompt' ? (
               <div className="space-y-2">

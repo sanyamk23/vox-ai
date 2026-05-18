@@ -7,6 +7,7 @@ from chat.views import (
     end_call,
     initiate_call,
     list_sessions,
+    list_voices,
     outgoing_call,
     session_status,
     upload_resume,
@@ -23,7 +24,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/call/", initiate_call),
     path("api/call/<str:call_sid>/end/", end_call),
-
+    path("api/voices/", list_voices),
     path("api/upload-resume/", upload_resume),
     path("api/sessions/", list_sessions),
     path("api/session/<str:call_sid>/", session_status),

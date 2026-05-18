@@ -38,6 +38,18 @@ class CallSession(models.Model):
         help_text="Compatibility summary from SummaryAgent (green/yellow/red)"
     )
 
+    # Redis fallback: token is stored here so TwilioConsumer can recover the
+    # session from DB when Redis evicts or restarts between call placement and
+    # Twilio's WebSocket connect (typically <5s but can be longer on cold start).
+    session_token = models.CharField(
+        max_length=36, blank=True, default='', db_index=True,
+        help_text="UUID token used as Redis key; allows DB fallback on Redis miss"
+    )
+    session_data = models.JSONField(
+        default=dict, blank=True,
+        help_text="Full session payload (jd, name, phone, voice_id, etc.) for Redis fallback"
+    )
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
