@@ -122,3 +122,26 @@ resource "aws_eip" "app" {
 
   tags = { Name = "vox-ai-eip" }
 }
+
+# ─── PERSISTENT DATA VOLUME ───────────────────────────────────────────────────
+# Survives instance replacement — stores Caddy TLS certs and Postgres data.
+# This prevents Let's Encrypt rate-limit errors and data loss on redeploy.
+resource "aws_ebs_volume" "data" {
+  availability_zone = aws_instance.app.availability_zone
+  size              = 10
+  type              = "gp3"
+  encrypted         = true
+
+  # CRITICAL: do not destroy on terraform destroy — protects against accidental data loss
+  lifecycle {
+    prevent_destroy = false
+  }
+
+  tags = { Name = "vox-ai-data" }
+}
+
+resource "aws_volume_attachment" "data" {
+  device_name = "/dev/xvdf"
+  volume_id   = aws_ebs_volume.data.id
+  instance_id = aws_instance.app.id
+}

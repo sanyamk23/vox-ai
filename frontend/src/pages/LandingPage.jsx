@@ -1,252 +1,580 @@
-import React from 'react';
-import { Mail, Twitter, Github, ChevronRight, ArrowRight } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import {
+  motion,
+  useScroll,
+  useTransform,
+  useMotionValue,
+  useSpring,
+  useInView,
+  useMotionTemplate,
+} from 'framer-motion';
 
-export default function LandingPage() {
+// ─── Animated film grain ──────────────────────────────────────────────────────
+function AnimatedGrain() {
   return (
-    <div className="relative min-h-screen bg-background text-cream overflow-x-hidden font-sans selection:bg-neon selection:text-background">
-      {/* Texture Overlay */}
-      <div 
-        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
-        style={{
-          backgroundImage: 'url(/texture.png)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center'
-        }}
-      />
-
-      {/* SECTION 1: HERO */}
-      <section className="relative w-full h-screen rounded-b-[32px] overflow-hidden flex flex-col items-center">
-        {/* Background Video */}
-        <video 
-          className="absolute inset-0 w-full h-full object-cover z-0"
-          autoPlay loop muted playsInline
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4"
-        />
-        <div className="absolute inset-0 bg-background/30 z-[1]" />
-
-        <div className="relative z-10 w-full max-w-[1831px] px-6 sm:px-12 md:px-16 flex flex-col h-full">
-          {/* Header */}
-          <header className="flex items-center justify-between pt-8">
-            <Link to="/" className="font-grotesk text-xl sm:text-2xl uppercase tracking-wider hover:text-neon transition-colors">
-              Clarix.Ai
-            </Link>
-            
-            <nav className="hidden lg:flex liquid-glass rounded-[28px] px-12 py-5 items-center gap-10">
-              {[
-                { name: 'Home', path: '/' },
-                { name: 'About', path: '/about' },
-                { name: 'Features', path: '/features' },
-                { name: 'App', path: '/app' },
-              ].map(link => (
-                <Link key={link.name} to={link.path} className="font-grotesk text-[13px] uppercase hover:text-neon transition-colors tracking-widest">
-                  {link.name}
-                </Link>
-              ))}
-            </nav>
-            
-            <div className="lg:hidden">
-              <Link to="/app" className="font-grotesk text-xs uppercase text-neon border border-neon px-4 py-2 rounded-full">
-                Launch
-              </Link>
-            </div>
-          </header>
-
-          
-
-          {/* Hero Content */}
-          <div className="flex-1 flex flex-col justify-center">
-            <div className="relative w-full max-w-[900px] lg:ml-24 xl:ml-32">
-              <h1 className="font-grotesk uppercase text-[42px] sm:text-[64px] md:text-[80px] lg:text-[100px] leading-[0.95] tracking-tighter">
-                Beyond resumes <br />
-                and ( their ) traditional limits
-              </h1>
-              <span className="font-condiment text-neon text-[28px] sm:text-[42px] md:text-[54px] absolute right-4 md:right-12 -bottom-10 md:bottom-2 translate-y-full md:translate-y-0 -rotate-2 mix-blend-exclusion opacity-95 normal-case">
-                Ai recruiter
-              </span>
-              
-              {/* Hero CTA Button */}
-              <div className="mt-20 md:mt-12 flex items-center gap-8">
-                <Link to="/app" className="group flex items-center gap-4 bg-neon px-8 py-4 rounded-full hover:scale-105 transition-all duration-300">
-                  <span className="font-grotesk text-background text-lg uppercase tracking-wider">Start Interview</span>
-                  <div className="w-8 h-8 rounded-full bg-background flex items-center justify-center group-hover:translate-x-1 transition-transform">
-                    <ArrowRight size={18} className="text-neon" />
-                  </div>
-                </Link>
-                <div className="hidden sm:block font-mono text-[11px] uppercase tracking-[0.2em] text-cream/60 max-w-[200px] leading-relaxed">
-                  Fully autonomous voice screening in real-time
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          
-        </div>
-      </section>
-
-      {/* SECTION 2: ABOUT / INTRO */}
-      <section className="relative w-full min-h-screen overflow-hidden flex flex-col justify-center py-24">
-        {/* Background Video */}
-        <video 
-          className="absolute inset-0 w-full h-full object-cover z-0"
-          autoPlay loop muted playsInline
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
-        />
-        <div className="absolute inset-0 bg-background/50 z-[1]" />
-
-        <div className="relative z-10 w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16 flex flex-col justify-between h-full min-h-[70vh]">
-          
-          <div className="flex flex-col lg:flex-row justify-between items-start gap-16 lg:gap-24">
-            <div className="relative">
-              <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
-                Hello!<br />
-                I'm clarix
-              </h2>
-              <span className="font-condiment text-neon text-[42px] sm:text-[60px] lg:text-[84px] absolute right-[-20px] bottom-[-20px] translate-x-0 translate-y-1/2 rotate-[-5deg] mix-blend-exclusion normal-case">
-                Clarix
-              </span>
-            </div>
-            <div className="font-mono text-[14px] md:text-[18px] uppercase max-w-[320px] leading-relaxed tracking-wider text-cream/90">
-              A digital agent fixed beyond time and bias. An exploration of intelligence, voice, and instant screening.
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 mt-32">
-             <div className="space-y-4">
-                <div className="w-12 h-[2px] bg-neon" />
-                <p className="font-mono text-xs uppercase tracking-widest leading-relaxed text-cream/40">
-                  Built on the latest foundation models to ensure accuracy and empathy in every conversation.
-                </p>
-             </div>
-             <div className="space-y-4">
-                <div className="w-12 h-[2px] bg-neon" />
-                <p className="font-mono text-xs uppercase tracking-widest leading-relaxed text-cream/40">
-                  Scaling your talent pipeline with infinite capacity and zero fatigue.
-                </p>
-             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* SECTION 3: TECH / FEATURES GRID */}
-      <section className="relative w-full bg-background py-32">
-        <div className="w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
-          
-          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-12 mb-24">
-            <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
-              Intelligence of <br />
-              <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
-                <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Voice</span> AI
-              </div>
-            </h2>
-            
-            <Link to="/app" className="group flex flex-col items-center">
-              <div className="flex items-center gap-4 hover:opacity-80 transition-opacity">
-                <span className="font-grotesk uppercase text-[32px] sm:text-[48px] lg:text-[64px] leading-none tracking-tighter">LAUNCH</span>
-                <div className="flex flex-col items-start leading-[0.85]">
-                  <span className="font-grotesk uppercase text-[20px] sm:text-[32px] lg:text-[40px] tracking-tighter">THE</span>
-                  <span className="font-grotesk uppercase text-[20px] sm:text-[32px] lg:text-[40px] tracking-tighter text-neon">APP</span>
-                </div>
-              </div>
-              <div className="w-full bg-neon h-[4px] md:h-[8px] mt-4 group-hover:scale-x-110 transition-transform origin-left" />
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <NFTCard 
-              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
-              label="Real-time Speech"
-              score="8.7/10"
-            />
-            <NFTCard 
-              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
-              label="Tone Analysis"
-              score="9.2/10"
-            />
-            <NFTCard 
-              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
-              label="Technical Depth"
-              score="8.5/10"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* SECTION 4: CTA */}
-      <section className="relative w-full overflow-hidden">
-        <video 
-          className="w-full h-auto block min-h-[400px] object-cover md:object-contain"
-          autoPlay loop muted playsInline
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4"
-        />
-
-        <div className="absolute inset-0 w-full h-full flex flex-col justify-center bg-background/20">
-          <div className="relative w-full h-full max-w-[1831px] mx-auto px-8">
-            
-            
-
-            {/* Right Aligned Text */}
-            <div className="absolute top-1/2 -translate-y-1/2 right-0 lg:pr-[15%] xl:pr-[20%] px-6 text-right">
-              <div className="relative inline-block">
-                <span className="font-condiment text-neon text-[24px] sm:text-[48px] lg:text-[72px] absolute -top-12 -left-8 md:-top-20 md:-left-24 mix-blend-exclusion normal-case rotate-[-8deg]">
-                  Hire smarter
-                </span>
-                <h2 className="font-grotesk uppercase text-[20px] sm:text-[40px] md:text-[54px] lg:text-[64px] leading-[1] tracking-tight">
-                  <div className="mb-6 lg:mb-10 text-neon">TRY NOW.</div>
-                  <div className="mb-2">REVEAL TRUE TALENT.</div>
-                  <div className="mb-2 text-cream/80 text-[0.8em]">DEFINE YOUR TEAM.</div>
-                  <div>HIRE THE BEST.</div>
-                </h2>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+    <div className="fixed inset-0 z-[300] pointer-events-none overflow-hidden opacity-[0.045] mix-blend-overlay select-none">
+      <svg
+        className="absolute -inset-[100%] w-[400%] h-[400%] animate-grain"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <filter id="grain-noise">
+          <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" />
+          <feColorMatrix type="saturate" values="0" />
+        </filter>
+        <rect width="100%" height="100%" filter="url(#grain-noise)" />
+      </svg>
     </div>
   );
 }
 
-function SocialButton({ icon: Icon }) {
+// ─── Scroll progress bar ──────────────────────────────────────────────────────
+function ScrollProgress() {
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: 0.001 });
   return (
-    <button className="w-[50px] h-[50px] sm:w-[60px] sm:h-[60px] flex items-center justify-center liquid-glass rounded-[1.25rem] hover:bg-white/10 transition-all hover:scale-110 active:scale-95 border border-white/5">
-      <Icon size={22} className="text-cream" />
-    </button>
+    <motion.div
+      className="fixed top-0 left-0 right-0 h-[3px] z-[200] origin-left"
+      style={{ scaleX, background: 'linear-gradient(90deg, #6FFF00, #40ffaa)' }}
+    />
   );
 }
 
-function ResponsiveSocialButton({ icon: Icon, hasBorder }) {
+// ─── Ambient orb ─────────────────────────────────────────────────────────────
+function Orb({ size = 500, color = '#6FFF00', x = 0, y = 0, delay = 0, opacity = 0.08 }) {
   return (
-    <button className={`w-[15vw] h-[15vw] sm:w-[120px] sm:h-[120px] md:w-[140px] md:h-[140px] lg:w-[160px] lg:h-[160px] flex items-center justify-center hover:bg-white/10 transition-colors ${hasBorder ? 'border-b border-white/10' : ''}`}>
-      <Icon className="w-1/3 h-1/4 text-cream" />
-    </button>
+    <motion.div
+      className="absolute rounded-full pointer-events-none"
+      style={{
+        width: size, height: size,
+        left: `calc(50% + ${x}px)`, top: `calc(50% + ${y}px)`,
+        transform: 'translate(-50%, -50%)',
+        background: `radial-gradient(circle, ${color} 0%, transparent 70%)`,
+        filter: 'blur(80px)', opacity,
+      }}
+      animate={{ x: [0, 50, -30, 0], y: [0, -40, 50, 0], scale: [1, 1.15, 0.88, 1] }}
+      transition={{ duration: 12, delay, repeat: Infinity, ease: 'easeInOut' }}
+    />
   );
 }
 
-function NFTCard({ videoUrl, label, score }) {
+// ─── Scroll-reveal wrapper ────────────────────────────────────────────────────
+function Reveal({ children, delay = 0, y = 50, className = '' }) {
   return (
-    <div className="liquid-glass rounded-[40px] p-5 hover:bg-white/10 transition-all duration-500 group border border-white/5 shadow-2xl">
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-80px' }}
+      transition={{ duration: 0.9, delay, ease: [0.16, 1, 0.3, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// ─── Character-by-character text reveal ──────────────────────────────────────
+function SplitText({ text, className = '', stagger = 0.025, delay = 0 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-60px' });
+  return (
+    <span ref={ref} className={className} aria-label={text} style={{ perspective: '600px' }}>
+      {text.split('').map((char, i) => (
+        <motion.span
+          key={i}
+          className="inline-block"
+          style={{ transformOrigin: 'bottom center' }}
+          initial={{ y: '105%', opacity: 0, rotateX: -70 }}
+          animate={inView ? { y: 0, opacity: 1, rotateX: 0 } : {}}
+          transition={{ duration: 0.65, delay: delay + i * stagger, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {char === ' ' ? ' ' : char}
+        </motion.span>
+      ))}
+    </span>
+  );
+}
+
+// ─── Hacker-scramble heading ──────────────────────────────────────────────────
+const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*';
+function ScrambleText({ text, className = '' }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-60px' });
+  const [displayed, setDisplayed] = useState(text);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!inView || startedRef.current) return;
+    startedRef.current = true;
+    let frame = 0;
+    const total = 22;
+    const cleanLen = text.replace(/ /g, '').length;
+    const id = setInterval(() => {
+      frame++;
+      setDisplayed(
+        text.split('').map((ch, i) => {
+          if (ch === ' ') return ch;
+          const charIndex = text.slice(0, i).replace(/ /g, '').length;
+          const revealAt = (charIndex / cleanLen) * total * 0.6;
+          if (frame > revealAt + total * 0.4) return ch;
+          return GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+        }).join('')
+      );
+      if (frame >= total) { setDisplayed(text); clearInterval(id); }
+    }, 55);
+    return () => clearInterval(id);
+  }, [inView, text]);
+
+  return <span ref={ref} className={className}>{displayed}</span>;
+}
+
+// ─── Scroll-triggered count-up ────────────────────────────────────────────────
+function AnimatedCounter({ to, suffix = '', prefix = '', duration = 2 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-40px' });
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!inView || startedRef.current) return;
+    startedRef.current = true;
+    const t0 = performance.now();
+    const tick = (now) => {
+      const elapsed = (now - t0) / 1000;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      if (ref.current) ref.current.textContent = prefix + Math.round(eased * to) + suffix;
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [inView, to, prefix, suffix, duration]);
+
+  return <span ref={ref}>{prefix}0{suffix}</span>;
+}
+
+// ─── Magnetic button wrapper ──────────────────────────────────────────────────
+function MagneticButton({ children, strength = 0.32 }) {
+  const ref = useRef(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const sx = useSpring(x, { stiffness: 180, damping: 18 });
+  const sy = useSpring(y, { stiffness: 180, damping: 18 });
+
+  const onMove = (e) => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    x.set((e.clientX - (r.left + r.width / 2)) * strength);
+    y.set((e.clientY - (r.top + r.height / 2)) * strength);
+  };
+  const onLeave = () => { x.set(0); y.set(0); };
+
+  return (
+    <motion.div ref={ref} style={{ x: sx, y: sy }} onMouseMove={onMove} onMouseLeave={onLeave}>
+      {children}
+    </motion.div>
+  );
+}
+
+// ─── Marquee ticker ───────────────────────────────────────────────────────────
+const TICKER_ITEMS = [
+  'GEMINI LIVE', 'REAL-TIME VOICE', 'AI SCREENING', 'ZERO BIAS',
+  'INSTANT INSIGHTS', 'TWILIO MEDIA STREAMS', 'MULTILINGUAL', 'AUTONOMOUS RECRUITER',
+  'GEMINI LIVE', 'REAL-TIME VOICE', 'AI SCREENING', 'ZERO BIAS',
+  'INSTANT INSIGHTS', 'TWILIO MEDIA STREAMS', 'MULTILINGUAL', 'AUTONOMOUS RECRUITER',
+];
+function Ticker() {
+  return (
+    <div className="w-full overflow-hidden border-y border-white/5 py-4 bg-background">
+      <motion.div
+        className="flex gap-10 whitespace-nowrap will-change-transform"
+        animate={{ x: ['0%', '-50%'] }}
+        transition={{ duration: 24, repeat: Infinity, ease: 'linear' }}
+      >
+        {TICKER_ITEMS.map((item, i) => (
+          <span key={i} className="font-mono text-[11px] uppercase tracking-[0.28em] text-cream/25 flex items-center gap-10 shrink-0">
+            {item}
+            <span className="text-neon text-[14px]">·</span>
+          </span>
+        ))}
+      </motion.div>
+    </div>
+  );
+}
+
+// ─── 3-D tilt team card with specular shine ──────────────────────────────────
+function TeamCard({ videoUrl, index, name, role, delay = 0 }) {
+  const cardRef = useRef(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const rotateX = useSpring(useTransform(y, [-0.5, 0.5], [12, -12]), { stiffness: 200, damping: 25 });
+  const rotateY = useSpring(useTransform(x, [-0.5, 0.5], [-12, 12]), { stiffness: 200, damping: 25 });
+  const glowOpacity = useMotionValue(0);
+  const shineX = useMotionValue(50);
+  const shineY = useMotionValue(50);
+  const shineBg = useMotionTemplate`radial-gradient(180px circle at ${shineX}% ${shineY}%, rgba(255,255,255,0.1) 0%, transparent 65%)`;
+
+  const handleMouse = (e) => {
+    if (!cardRef.current) return;
+    const r = cardRef.current.getBoundingClientRect();
+    const nx = (e.clientX - r.left) / r.width;
+    const ny = (e.clientY - r.top) / r.height;
+    x.set(nx - 0.5);
+    y.set(ny - 0.5);
+    glowOpacity.set(1);
+    shineX.set(nx * 100);
+    shineY.set(ny * 100);
+  };
+  const handleLeave = () => {
+    x.set(0); y.set(0); glowOpacity.set(0);
+    shineX.set(50); shineY.set(50);
+  };
+
+  return (
+    <motion.div
+      ref={cardRef}
+      style={{ rotateX, rotateY, transformPerspective: 1200 }}
+      onMouseMove={handleMouse}
+      onMouseLeave={handleLeave}
+      initial={{ opacity: 0, y: 70 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.85, delay, ease: [0.16, 1, 0.3, 1] }}
+      whileHover={{ scale: 1.03, zIndex: 10 }}
+      className="liquid-glass rounded-[40px] p-5 border border-white/5 shadow-2xl group cursor-pointer relative"
+    >
+      {/* outer glow ring */}
+      <motion.div
+        className="absolute inset-0 rounded-[40px] pointer-events-none"
+        style={{ opacity: glowOpacity, boxShadow: '0 0 40px 4px rgba(111,255,0,0.18), inset 0 0 30px rgba(111,255,0,0.06)' }}
+        transition={{ duration: 0.2 }}
+      />
+
+      {/* specular shine follows cursor */}
+      <motion.div
+        className="absolute inset-0 rounded-[40px] pointer-events-none z-[5]"
+        style={{ background: shineBg, opacity: glowOpacity }}
+      />
+
       <div className="relative w-full aspect-square rounded-[32px] overflow-hidden bg-black/50">
-        <video 
-          className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-          autoPlay loop muted playsInline
-          src={videoUrl}
+        <div className="absolute inset-0 rounded-[32px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-10 pointer-events-none"
+          style={{ boxShadow: 'inset 0 0 50px rgba(111,255,0,0.12)' }} />
+
+        <video
+          className="absolute inset-0 w-full h-full object-cover group-hover:scale-108 transition-transform duration-700"
+          autoPlay loop muted playsInline src={videoUrl}
         />
-        
-        {/* Overlay bar */}
-        <div className="absolute bottom-5 left-5 right-5 liquid-glass rounded-[24px] px-6 py-5 flex items-center justify-between border border-white/10 backdrop-blur-md">
-          <div className="flex flex-col">
-            <span className="font-mono text-[10px] text-cream/50 uppercase tracking-[0.2em] mb-1">{label}</span>
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-[12px] text-cream/60 uppercase">Score</span>
-              <span className="font-mono text-[18px] font-black text-neon">{score}</span>
-            </div>
-          </div>
-          
-          <Link to="/app" className="w-[52px] h-[52px] rounded-full bg-gradient-to-br from-[#b724ff] to-[#7c3aed] flex items-center justify-center shadow-xl shadow-purple-500/40 hover:scale-110 transition-transform">
-            <ChevronRight size={26} className="text-white ml-0.5" />
-          </Link>
+
+        <div className="absolute top-5 left-5 font-mono text-[11px] text-cream/30 uppercase tracking-[0.28em] z-20">
+          {index}
+        </div>
+
+        <div className="absolute bottom-5 left-5 right-5 liquid-glass rounded-[24px] px-6 py-5 border border-white/10 backdrop-blur-md z-20">
+          <motion.div
+            className="h-[2px] bg-neon mb-3 origin-left"
+            initial={{ width: 28 }}
+            whileHover={{ width: 52 }}
+            transition={{ duration: 0.3 }}
+          />
+          <p className="font-grotesk uppercase text-[15px] sm:text-[17px] leading-tight tracking-tight">{name}</p>
+          <p className="font-mono text-[9px] sm:text-[10px] text-cream/50 uppercase tracking-[0.18em] mt-1.5 leading-relaxed">{role}</p>
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+export default function LandingPage() {
+  const { scrollYProgress } = useScroll();
+  const heroY = useTransform(scrollYProgress, [0, 0.4], [0, -80]);
+
+  // Section spotlight — mouse-position radial glow on team section
+  const spotlightRef = useRef(null);
+  const spotX = useMotionValue(50);
+  const spotY = useMotionValue(50);
+  const spotBg = useMotionTemplate`radial-gradient(900px circle at ${spotX}% ${spotY}%, rgba(111,255,0,0.05) 0%, transparent 60%)`;
+
+  const handleTeamMove = (e) => {
+    if (!spotlightRef.current) return;
+    const r = spotlightRef.current.getBoundingClientRect();
+    spotX.set(((e.clientX - r.left) / r.width) * 100);
+    spotY.set(((e.clientY - r.top) / r.height) * 100);
+  };
+
+  return (
+    <div className="relative min-h-screen bg-background text-cream overflow-x-hidden font-sans selection:bg-neon selection:text-background">
+      <ScrollProgress />
+      <AnimatedGrain />
+
+      {/* Texture overlay */}
+      <div className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
+        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }} />
+
+      {/* ── HERO ─────────────────────────────────────────────────── */}
+      <section className="relative w-full h-screen rounded-b-[32px] overflow-hidden flex flex-col items-center">
+        <video className="absolute inset-0 w-full h-full object-cover z-0" autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4" />
+        <div className="absolute inset-0 bg-background/40 z-[1]" />
+
+        <div className="absolute inset-0 z-[2] overflow-hidden pointer-events-none">
+          <Orb size={700} color="#6FFF00" x={-350} y={80}  delay={0}  opacity={0.06} />
+          <Orb size={450} color="#3b5bff" x={350}  y={-80} delay={3}  opacity={0.07} />
+          <Orb size={300} color="#6FFF00" x={200}  y={200} delay={6}  opacity={0.04} />
+        </div>
+
+        <motion.div style={{ y: heroY }} className="relative z-10 w-full max-w-[1831px] px-6 sm:px-12 md:px-16 flex flex-col h-full">
+          {/* Nav */}
+          <header className="flex items-center justify-between pt-8">
+            <motion.div initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7 }}>
+              <Link to="/" className="font-grotesk text-xl sm:text-2xl uppercase tracking-wider hover:text-neon transition-colors">
+                Clarix.Ai
+              </Link>
+            </motion.div>
+
+            <motion.nav initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, delay: 0.15 }}
+              className="hidden lg:flex liquid-glass rounded-[28px] px-12 py-5 items-center gap-10">
+              {[{ name: 'Home', path: '/' }, { name: 'About', path: '/about' }, { name: 'Features', path: '/features' }, { name: 'App', path: '/app' }].map((link, i) => (
+                <motion.div key={link.name} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 + i * 0.07 }}>
+                  <Link to={link.path} className="font-grotesk text-[13px] uppercase hover:text-neon transition-colors tracking-widest">
+                    {link.name}
+                  </Link>
+                </motion.div>
+              ))}
+            </motion.nav>
+
+            <motion.div initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7 }}
+              className="lg:hidden">
+              <Link to="/app" className="font-grotesk text-xs uppercase text-neon border border-neon px-4 py-2 rounded-full">
+                Launch
+              </Link>
+            </motion.div>
+          </header>
+
+          {/* Hero text */}
+          <div className="flex-1 flex flex-col justify-center">
+            <div className="relative w-full max-w-[900px] lg:ml-24 xl:ml-32">
+              <h1 className="font-grotesk uppercase text-[42px] sm:text-[64px] md:text-[80px] lg:text-[100px] leading-[0.95] tracking-tighter overflow-hidden">
+                {['Beyond resumes', 'and ( their )', 'traditional limits'].map((line, i) => (
+                  <span key={i} className="block overflow-hidden">
+                    <motion.span className="block"
+                      initial={{ y: '110%', opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      transition={{ duration: 1, delay: 0.5 + i * 0.18, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                      {line}
+                    </motion.span>
+                  </span>
+                ))}
+              </h1>
+
+              <motion.span
+                className="font-condiment text-neon text-[28px] sm:text-[42px] md:text-[54px] absolute right-4 md:right-12 -bottom-10 md:bottom-2 translate-y-full md:translate-y-0 mix-blend-exclusion opacity-95 normal-case"
+                initial={{ opacity: 0, rotate: -10, scale: 0.7 }}
+                animate={{ opacity: 0.95, rotate: -2, scale: 1 }}
+                transition={{ duration: 0.9, delay: 1.1, ease: [0.16, 1, 0.3, 1] }}
+              >
+                Ai recruiter
+              </motion.span>
+
+              <motion.div className="mt-20 md:mt-12 flex items-center gap-8"
+                initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <MagneticButton>
+                  <Link to="/app" className="group flex items-center gap-4 bg-neon px-8 py-4 rounded-full hover:scale-105 transition-all duration-300 neon-glow">
+                    <span className="font-grotesk text-background text-lg uppercase tracking-wider">Start Interview</span>
+                    <div className="w-8 h-8 rounded-full bg-background flex items-center justify-center group-hover:translate-x-1 transition-transform">
+                      <ArrowRight size={18} className="text-neon" />
+                    </div>
+                  </Link>
+                </MagneticButton>
+                <div className="hidden sm:block font-mono text-[11px] uppercase tracking-[0.2em] text-cream/50 max-w-[200px] leading-relaxed">
+                  Fully autonomous voice screening in real-time
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          {/* Scroll indicator */}
+          <motion.div
+            className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-20"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.8, duration: 0.8 }}
+          >
+            <span className="font-mono text-[9px] uppercase tracking-[0.3em] text-cream/25">Scroll</span>
+            <motion.div className="w-[1px] h-10 bg-gradient-to-b from-neon/80 to-transparent"
+              animate={{ scaleY: [1, 0.2, 1], opacity: [0.8, 0.2, 0.8] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }} />
+          </motion.div>
+        </motion.div>
+      </section>
+
+      {/* ── TICKER ───────────────────────────────────────────────── */}
+      <Ticker />
+
+      {/* ── STATS ────────────────────────────────────────────────── */}
+      <section className="relative py-24 border-b border-white/[0.04] overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <Orb size={700} color="#6FFF00" x={0} y={0} delay={1} opacity={0.025} />
+        </div>
+        <div className="relative max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-12 lg:gap-8">
+            {[
+              { to: 1000, suffix: '+', prefix: '',  label: 'Calls Analyzed' },
+              { to: 94,   suffix: '%', prefix: '',  label: 'Screening Accuracy' },
+              { to: 5,    suffix: '',  prefix: '',  label: 'AI Voice Personas' },
+              { to: 2,    suffix: 's', prefix: '<', label: 'Avg Response Time' },
+            ].map((stat, i) => (
+              <Reveal key={i} delay={i * 0.1}>
+                <div className="flex flex-col gap-3">
+                  <div className="font-grotesk text-[56px] sm:text-[72px] lg:text-[88px] leading-none tracking-tighter">
+                    <AnimatedCounter to={stat.to} suffix={stat.suffix} prefix={stat.prefix} duration={2.2} />
+                  </div>
+                  <div className="w-10 h-[1.5px] bg-neon" />
+                  <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-cream/40 leading-relaxed">{stat.label}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── ABOUT ────────────────────────────────────────────────── */}
+      <section className="relative w-full min-h-screen overflow-hidden flex flex-col justify-center py-24">
+        <video className="absolute inset-0 w-full h-full object-cover z-0" autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4" />
+        <div className="absolute inset-0 bg-background/55 z-[1]" />
+
+        <div className="relative z-10 w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16 flex flex-col justify-between h-full min-h-[70vh]">
+          <div className="flex flex-col lg:flex-row justify-between items-start gap-16 lg:gap-24">
+            <Reveal>
+              <div className="relative">
+                <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
+                  Hello!<br />I'm clarix
+                </h2>
+                <span className="font-condiment text-neon text-[42px] sm:text-[60px] lg:text-[84px] absolute right-[-20px] bottom-[-20px] translate-y-1/2 rotate-[-5deg] mix-blend-exclusion normal-case">
+                  Clarix
+                </span>
+              </div>
+            </Reveal>
+
+            <Reveal delay={0.15}>
+              <div className="font-mono text-[14px] md:text-[18px] uppercase max-w-[320px] leading-relaxed tracking-wider text-cream/90">
+                A digital agent fixed beyond time and bias. An exploration of intelligence, voice, and instant screening.
+              </div>
+            </Reveal>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 mt-32">
+            {[
+              'Built on the latest foundation models to ensure accuracy and empathy in every conversation.',
+              'Scaling your talent pipeline with infinite capacity and zero fatigue.',
+            ].map((text, i) => (
+              <Reveal key={i} delay={i * 0.15}>
+                <div className="space-y-4">
+                  <div className="w-12 h-[2px] bg-neon" />
+                  <p className="font-mono text-xs uppercase tracking-widest leading-relaxed text-cream/40">{text}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── TEAM ─────────────────────────────────────────────────── */}
+      <section
+        ref={spotlightRef}
+        onMouseMove={handleTeamMove}
+        className="relative w-full bg-background py-32 overflow-hidden"
+      >
+        {/* Mouse-position section spotlight */}
+        <motion.div className="absolute inset-0 pointer-events-none z-[1]" style={{ background: spotBg }} />
+
+        <div className="absolute inset-0 pointer-events-none z-0">
+          <Orb size={800} color="#6FFF00" x={-450} y={50}   delay={0} opacity={0.035} />
+          <Orb size={600} color="#3b5bff" x={450}  y={250}  delay={5} opacity={0.045} />
+          <Orb size={350} color="#6FFF00" x={100}  y={-150} delay={2} opacity={0.03}  />
+        </div>
+
+        <div className="relative z-10 w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-12 mb-24">
+            <div>
+              <motion.p className="font-mono text-[11px] uppercase tracking-[0.35em] text-neon mb-6"
+                initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }} transition={{ duration: 0.6 }}>
+                The Builders
+              </motion.p>
+              <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
+                <ScrambleText text="MINDS BEHIND" className="block" />
+                <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
+                  <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Clarix</span> AI
+                </div>
+              </h2>
+            </div>
+
+            <Reveal delay={0.2}>
+              <Link to="/app" className="group flex flex-col items-center">
+                <div className="flex items-center gap-4 hover:opacity-80 transition-opacity">
+                  <span className="font-grotesk uppercase text-[32px] sm:text-[48px] lg:text-[64px] leading-none tracking-tighter">LAUNCH</span>
+                  <div className="flex flex-col items-start leading-[0.85]">
+                    <span className="font-grotesk uppercase text-[20px] sm:text-[32px] lg:text-[40px] tracking-tighter">THE</span>
+                    <span className="font-grotesk uppercase text-[20px] sm:text-[32px] lg:text-[40px] tracking-tighter text-neon">APP</span>
+                  </div>
+                </div>
+                <div className="w-full bg-neon h-[4px] md:h-[8px] mt-4 group-hover:scale-x-110 transition-transform origin-left" />
+              </Link>
+            </Reveal>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
+              index="01" name="Rishabh Tiwari" role="Chief Visionary · Origin of the Spark" delay={0} />
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
+              index="02" name="Prerna Shekhawat" role="Neural Conductor · Cognitive Systems" delay={0.1} />
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
+              index="03" name="Sanyam Kumar" role="Deep Intelligence Architect · AI Research" delay={0.2} />
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4"
+              index="04" name="Ajay Singh Rathore" role="Systems Convergence Commander · Full-Stack" delay={0.3} />
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA ──────────────────────────────────────────────────── */}
+      <section className="relative w-full overflow-hidden">
+        <video className="w-full h-auto block min-h-[400px] object-cover md:object-contain" autoPlay loop muted playsInline
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4" />
+
+        <div className="absolute inset-0 w-full h-full flex flex-col justify-center bg-background/20">
+          <div className="relative w-full h-full max-w-[1831px] mx-auto px-8">
+            <div className="absolute top-1/2 -translate-y-1/2 right-0 lg:pr-[15%] xl:pr-[20%] px-6 text-right">
+              <Reveal y={30}>
+                <div className="relative inline-block">
+                  <span className="font-condiment text-neon text-[24px] sm:text-[48px] lg:text-[72px] absolute -top-12 -left-8 md:-top-20 md:-left-24 mix-blend-exclusion normal-case rotate-[-8deg]">
+                    Hire smarter
+                  </span>
+                  <h2 className="font-grotesk uppercase text-[20px] sm:text-[40px] md:text-[54px] lg:text-[64px] leading-[1] tracking-tight">
+                    {['TRY NOW.', 'REVEAL TRUE TALENT.', 'DEFINE YOUR TEAM.', 'HIRE THE BEST.'].map((line, i) => (
+                      <motion.div key={i}
+                        className={`${i === 0 ? 'mb-6 lg:mb-10 text-neon' : i === 2 ? 'mb-2 text-cream/80 text-[0.8em]' : 'mb-2'}`}
+                        initial={{ opacity: 0, x: 40 }}
+                        whileInView={{ opacity: 1, x: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.7, delay: i * 0.12, ease: [0.16, 1, 0.3, 1] }}
+                      >
+                        {line}
+                      </motion.div>
+                    ))}
+                  </h2>
+                </div>
+              </Reveal>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

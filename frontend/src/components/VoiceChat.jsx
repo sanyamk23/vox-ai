@@ -80,7 +80,7 @@ function buildExportText(report, name) {
 }
 
 // ── Backend URLs (override via VITE_API_BASE_URL in .env) ────────────────────
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000')).replace(/\/$/, '');
 const WS_BASE  = API_BASE.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -121,12 +121,15 @@ export default function VoiceChat() {
   const [structuredFields, setStructuredFields] = useState(EMPTY_STRUCTURED);
   const [connectingType,   setConnectingType]  = useState(null);
   const [toast,            setToast]           = useState(null);
+  const [voices,           setVoices]          = useState([]);
+  const [selectedVoiceId,  setSelectedVoiceId] = useState('');
 
   const endRef       = useRef(null);
   const timerRef     = useRef(null);
   const fileInputRef = useRef(null);
   const pollRef      = useRef(null);
   const wsRef        = useRef(null);
+  const callSidRef   = useRef(null);
   const [bars, setBars] = useState(Array(20).fill(0));
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
@@ -147,6 +150,19 @@ export default function VoiceChat() {
     }
     return () => clearInterval(timerRef.current);
   }, [status]);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`${API_BASE}/api/voices/`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => {
+        if (!mounted || !d.voices?.length) return;
+        setVoices(d.voices);
+        setSelectedVoiceId(prev => prev || d.voices[0].id);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
 
 
 
@@ -188,8 +204,12 @@ export default function VoiceChat() {
   }, []);
 
   const cleanup = useCallback(() => {
+    // Hang up the Twilio call so the phone actually stops ringing
+    if (callSidRef.current) {
+      fetch(`${API_BASE}/api/call/${callSidRef.current}/end/`, { method: 'POST' }).catch(() => {});
+    }
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-    clearInterval(pollRef.current);
+    // Keep polling so the evaluation scorecard still appears when it's ready
     setBars(Array(20).fill(0));
     setStatus('ended');
     setConnectingType(null);
@@ -201,17 +221,22 @@ export default function VoiceChat() {
   }, [name, showToast]);
 
   const _startPolling = useCallback((callSid) => {
+    if (!callSid?.trim()) return;
     clearInterval(pollRef.current);
     let attempts = 0;
-    const MAX_ATTEMPTS = 60; // 5 minutes at 5s intervals
+    // 300 attempts × 5s = 25 minutes — covers 20-min call + evaluation time (~30s)
+    const MAX_ATTEMPTS = 300;
     pollRef.current = setInterval(async () => {
       attempts++;
       if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
       try {
         const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
-        if (r.status === 202) return; // still pending
+        if (r.status === 202) return; // call still live — keep polling
         const data = await r.json();
-        if (data.status === 'complete') {
+        if (data.status === 'evaluating') {
+          // Call has ended — transition UI immediately, keep polling for scorecard
+          setStatus('ended');
+        } else if (data.status === 'complete') {
           clearInterval(pollRef.current);
           const reason = JSON.stringify({ ...(data.notes || {}), candidate_summary: data.candidate_summary });
           setRecap({ score: data.score, reason });
@@ -255,20 +280,22 @@ export default function VoiceChat() {
         if (Object.keys(recruiter_inputs).length) payload.recruiter_inputs = recruiter_inputs;
       }
 
+      const effectiveVoiceId = selectedVoiceId || voices[0]?.id || 'priya';
       const r   = await fetch(`${API_BASE}/api/call/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, resume_text: resumeText }),
+        body: JSON.stringify({ ...payload, resume_text: resumeText, voice_id: effectiveVoiceId }),
       });
       const res = await r.json();
       if (res.status === 'success') {
         const sid = res.call_sid;
+        callSidRef.current = sid;
         setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${sid}`, time: nowTime() }]);
         setStatus('connected');
         // Poll for evaluation results — backend saves DB record after call ends
         _startPolling(sid);
       } else { alert(res.message); setStatus('idle'); setConnectingType(null); }
     } catch { alert('Backend unreachable.'); setStatus('idle'); setConnectingType(null); }
-  }, [phone, jd, name, inputMode, structuredFields, resumeText, _startPolling]);
+  }, [phone, jd, name, inputMode, structuredFields, resumeText, selectedVoiceId, voices, _startPolling]);
 
   const report = recap ? (() => {
     const d = jsonTry(recap.reason || '{}');
@@ -282,7 +309,7 @@ export default function VoiceChat() {
 
   if (isLive) {
     return (
-      <CallConsole 
+      <CallConsole
         name={name}
         phone={phone}
         elapsed={elapsed}
@@ -308,14 +335,14 @@ export default function VoiceChat() {
   return (
     <div className="relative min-h-screen bg-background text-cream overflow-hidden font-sans selection:bg-neon selection:text-background">
       {/* Texture Overlay */}
-      <div 
+      <div
         className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
         style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       />
-      
+
       {/* Background Video */}
       <div className="fixed inset-0 z-0 opacity-20">
-        <video 
+        <video
           className="absolute inset-0 w-full h-full object-cover"
           autoPlay loop muted playsInline
           src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
@@ -323,14 +350,14 @@ export default function VoiceChat() {
         <div className="absolute inset-0 bg-background/40" />
       </div>
       {/* Texture Overlay */}
-      <div 
+      <div
         className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
         style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       />
-      
+
       {/* Background Video */}
       <div className="fixed inset-0 z-0 opacity-40">
-        <video 
+        <video
           className="absolute inset-0 w-full h-full object-cover"
           autoPlay loop muted playsInline
           src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4"
@@ -379,7 +406,7 @@ export default function VoiceChat() {
         {/* ═══ LEFT PANEL — Setup ═══ */}
         <aside className="col-span-12 lg:col-span-3 flex flex-col liquid-glass rounded-[32px] overflow-hidden">
           <div className="p-4 lg:p-5 flex-1 overflow-y-auto space-y-6 scrollbar-hide">
-            
+
             <div className="space-y-1">
               <h2 className="font-grotesk uppercase text-[22px] leading-none">Role Info</h2>
               <p className="font-mono text-[11px] text-cream/50 uppercase">Configure AI Parameters</p>
@@ -390,6 +417,35 @@ export default function VoiceChat() {
               <button onClick={() => setInputMode('prompt')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'prompt' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Freeform</button>
               <button onClick={() => setInputMode('structured')} className={`flex-1 py-2 text-[11px] font-mono uppercase transition-all rounded-[12px] ${inputMode === 'structured' ? 'bg-white/20 text-cream shadow-sm' : 'text-cream/40 hover:text-cream/80'}`}>Structured</button>
             </div>
+
+            {/* HR Voice Selector */}
+            {voices.length > 0 && (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-neon uppercase tracking-wider flex items-center gap-1.5">
+                  <Mic size={10} /> HR Voice
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {voices.map(v => {
+                    const active = selectedVoiceId === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        disabled={isLive}
+                        onClick={() => setSelectedVoiceId(v.id)}
+                        className={`flex flex-col gap-0.5 p-2.5 rounded-[12px] text-left transition-all border ${
+                          active
+                            ? 'bg-neon/15 border-neon/50 text-cream'
+                            : 'bg-white/5 border-white/10 text-cream/50 hover:bg-white/10 hover:text-cream/80'
+                        }`}
+                      >
+                        <span className={`font-mono text-[11px] uppercase font-semibold ${active ? 'text-neon' : ''}`}>{v.display_name}</span>
+                        <span className="font-mono text-[9px] leading-tight opacity-70">{v.accent}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {inputMode === 'prompt' ? (
               <div className="space-y-2">
@@ -562,7 +618,7 @@ export default function VoiceChat() {
               </div>
             )}
             {(isLive || isDone) && (
-              <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
+              <button onClick={() => { clearInterval(pollRef.current); callSidRef.current = null; setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
                 className="w-full mt-3 py-2 font-mono text-[10px] text-cream/40 hover:text-cream uppercase tracking-widest transition-colors">
                 Start New Session
               </button>
@@ -572,7 +628,7 @@ export default function VoiceChat() {
 
         {/* ═══ CENTER PANEL — Log ═══ */}
         <section className="col-span-12 lg:col-span-6 flex flex-col liquid-glass rounded-[32px] overflow-hidden relative">
-          
+
           <div className="px-8 py-5 border-b border-white/10 flex items-center justify-between bg-white/5 backdrop-blur-md">
             <h2 className="font-grotesk uppercase text-[22px] leading-none">Transcript</h2>
             <MessageSquare size={16} className="text-cream/50" />

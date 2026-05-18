@@ -16,6 +16,26 @@
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 }
 
+/* ── Hide system cursor on hover-capable devices ─────────────── */
+@media (hover: hover) {
+  *, *::before, *::after { cursor: none !important; }
+}
+
+/* ── Animated film grain ──────────────────────────────────────── */
+@keyframes grain {
+  0%, 100% { transform: translate(0, 0); }
+  10%       { transform: translate(-5%, -10%); }
+  20%       { transform: translate(-15%, 5%); }
+  30%       { transform: translate(7%, -25%); }
+  40%       { transform: translate(-5%, 25%); }
+  50%       { transform: translate(-15%, 10%); }
+  60%       { transform: translate(15%, 0%); }
+  70%       { transform: translate(0%, 15%); }
+  80%       { transform: translate(3%, -35%); }
+  90%       { transform: translate(-10%, 10%); }
+}
+.animate-grain { animation: grain 0.6s steps(1) infinite; }
+
 .liquid-glass {
   background: rgba(255, 255, 255, 0.01);
   background-blend-mode: luminosity;
@@ -54,4 +74,32 @@
 
 .animate-marquee {
   animation: marquee 20s linear infinite;
+}
+
+/* ── 3D card hover scale (Tailwind can't express 1.08) ─── */
+.group:hover .group-hover\:scale-108 {
+  transform: scale(1.08);
+}
+
+/* ── Neon glow on CTA button ─────────────────────────── */
+@keyframes neon-pulse {
+  0%, 100% { box-shadow: 0 0 30px rgba(111,255,0,0.35); }
+  50%       { box-shadow: 0 0 60px rgba(111,255,0,0.6);  }
+}
+.neon-glow { animation: neon-pulse 2.5s ease-in-out infinite; }
+
+/* ── Subtle scanline on team cards ──────────────────── */
+@keyframes scanline {
+  0%   { top: -10%; }
+  100% { top: 110%; }
+}
+.scanline::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(111,255,0,0.25), transparent);
+  animation: scanline 4s linear infinite;
+  pointer-events: none;
+  z-index: 5;
 }

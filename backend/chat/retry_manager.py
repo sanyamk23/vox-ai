@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_RETRY_KEY_PREFIX = "vox:retry:"
+_RETRY_KEY_PREFIX  = "vox:retry:"
 _RETRY_TTL_SECONDS = 45 * 60          # 45 min covers both retry windows
 _MAX_PRIOR_LINES   = 30               # max transcript lines stored between retries
 
@@ -46,6 +47,29 @@ RETRY_2_DELAY  = 300.0   # seconds — 5 minutes
 # Strong refs to scheduled retry tasks so the event loop doesn't GC them
 # mid-sleep (see https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task).
 _PENDING_RETRY_TASKS: set[asyncio.Task] = set()
+
+# ---------------------------------------------------------------------------
+# Transcript sanitization — strips prompt-injection attempts from prior calls
+# ---------------------------------------------------------------------------
+
+# Patterns that could hijack system behaviour if carried across retry boundaries
+_INJECTION_PATTERNS = re.compile(
+    r"\[END_CALL\]"                        # premature close signal
+    r"|ignore (previous|all|your) instructions?"  # jailbreak
+    r"|system prompt"
+    r"|you are now"
+    r"|disregard (the )?(above|previous|all)"
+    r"|new instructions?:",
+    re.IGNORECASE,
+)
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_transcript_line(line: str) -> str:
+    """Remove control chars and known prompt-injection patterns from a transcript line."""
+    line = _CONTROL_CHARS.sub("", line)
+    line = _INJECTION_PATTERNS.sub("[REDACTED]", line)
+    return line[:500]  # hard cap per line to prevent bloat
 
 # Signals in the last AI turns that mean the call closed naturally (not a drop)
 _CLOSE_SIGNALS = {
@@ -123,6 +147,8 @@ class CallRetryManager:
         transcript: list[str],
         notes: dict,
         resume_text: str = "",
+        recruiter_inputs: dict | None = None,
+        voice_id: str = "",
     ) -> int:
         """
         Saves the dropped call's context and returns the NEW retry number
@@ -131,18 +157,23 @@ class CallRetryManager:
         state = cls.load(phone)
         prior_lines = state.get("transcript", [])
 
+        # Sanitize incoming transcript before merging to block injection carry-over
+        clean_transcript = [_sanitize_transcript_line(l) for l in transcript if isinstance(l, str)]
+
         # Accumulate transcript across retries so context grows with each call
-        combined = (prior_lines + transcript)[-_MAX_PRIOR_LINES:]
+        combined = (prior_lines + clean_transcript)[-_MAX_PRIOR_LINES:]
 
         new_count = state.get("count", 0) + 1
         cls.save(phone, {
-            "count":       new_count,
-            "transcript":  combined,
-            "notes":       notes,
-            "jd":          jd,
-            "name":        name,
-            "resume_text": resume_text or state.get("resume_text", ""),
-            "updated_at":  time.time(),
+            "count":            new_count,
+            "transcript":       combined,
+            "notes":            notes,
+            "jd":               jd,
+            "name":             name,
+            "resume_text":      resume_text or state.get("resume_text", ""),
+            "recruiter_inputs": recruiter_inputs or state.get("recruiter_inputs") or {},
+            "voice_id":         voice_id or state.get("voice_id", ""),
+            "updated_at":       time.time(),
         })
         logger.info("[Retry] Drop recorded for %s — retry_num=%d", phone, new_count)
         return new_count
@@ -188,7 +219,9 @@ class CallRetryManager:
         if not transcript:
             return ""
 
-        turns_text = "\n".join(transcript[-_MAX_PRIOR_LINES:])
+        # Re-sanitize on the way out (defensive — transcript may have been stored before sanitization)
+        clean = [_sanitize_transcript_line(l) for l in transcript[-_MAX_PRIOR_LINES:] if isinstance(l, str)]
+        turns_text = "\n".join(clean)
         if notes:
             notes_text = "\n".join(f"  {k}: {v}" for k, v in notes.items())
         else:
@@ -225,6 +258,8 @@ class CallRetryManager:
         transcript: list[str],
         notes: dict,
         resume_text: str = "",
+        recruiter_inputs: dict | None = None,
+        voice_id: str = "",
         retry_num: int,
         delay_seconds: float,
         host_url: str,
@@ -235,18 +270,39 @@ class CallRetryManager:
         Uses asyncio.create_task so it never blocks the caller.
         The Twilio SDK call runs in a thread executor (it is synchronous).
         """
-        task = asyncio.create_task(
-            cls._delayed_call(
-                phone=phone, name=name, jd=jd,
-                transcript=transcript, notes=notes,
-                resume_text=resume_text,
-                retry_num=retry_num, delay_seconds=delay_seconds,
-                host_url=host_url, from_number=from_number,
-            ),
-            name=f"retry-{retry_num}-{phone}",
+        # Dedup: if a retry task for this phone+attempt is already pending, skip
+        task_name = f"retry-{retry_num}-{phone}"
+        if any(t.get_name() == task_name for t in _PENDING_RETRY_TASKS if not t.done()):
+            logger.warning("[Retry] Duplicate retry #%d for %s already scheduled — skipping", retry_num, phone)
+            return
+
+        coro = cls._delayed_call(
+            phone=phone, name=name, jd=jd,
+            transcript=transcript, notes=notes,
+            resume_text=resume_text,
+            recruiter_inputs=recruiter_inputs,
+            voice_id=voice_id,
+            retry_num=retry_num, delay_seconds=delay_seconds,
+            host_url=host_url, from_number=from_number,
         )
-        _PENDING_RETRY_TASKS.add(task)
-        task.add_done_callback(_PENDING_RETRY_TASKS.discard)
+
+        try:
+            # Async context (TwilioConsumer._handle_call_ended) — create task on running loop
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(coro, name=task_name)
+            _PENDING_RETRY_TASKS.add(task)
+            task.add_done_callback(_PENDING_RETRY_TASKS.discard)
+        except RuntimeError:
+            # Sync context (Django sync view like call_status_webhook running in thread executor)
+            # asyncio.create_task requires a running loop — use a daemon thread with its own loop.
+            import threading
+
+            def _run_in_thread() -> None:
+                asyncio.run(coro)
+
+            t = threading.Thread(target=_run_in_thread, daemon=True, name=task_name)
+            t.start()
+
         logger.info(
             "[Retry] Callback #%d scheduled for %s in %.0fs",
             retry_num, phone, delay_seconds,
@@ -262,6 +318,8 @@ class CallRetryManager:
         transcript: list[str],
         notes: dict,
         resume_text: str = "",
+        recruiter_inputs: dict | None = None,
+        voice_id: str = "",
         retry_num: int,
         delay_seconds: float,
         host_url: str,
@@ -284,6 +342,8 @@ class CallRetryManager:
                     jd=jd,
                     name=name,
                     resume_text=resume_text,
+                    recruiter_inputs=recruiter_inputs or {},
+                    voice_id=voice_id,
                     retry_num=retry_num,
                     prior_transcript=transcript[-_MAX_PRIOR_LINES:],
                     prior_notes=notes,

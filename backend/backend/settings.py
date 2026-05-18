@@ -4,6 +4,29 @@ from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
 
+# Sentry — initialise before anything else so it captures startup errors too.
+# Opt-in: only active when SENTRY_DSN is set in the environment.
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    import logging as _logging
+
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        integrations=[
+            DjangoIntegration(),
+            LoggingIntegration(
+                level=_logging.INFO,        # Capture INFO+ as breadcrumbs
+                event_level=_logging.ERROR, # Send ERROR+ as Sentry events
+            ),
+        ],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        send_default_pii=False,  # Never send PII (phone numbers, names) to Sentry
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+    )
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 
@@ -19,9 +42,17 @@ if not SECRET_KEY:
             "Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(50))'"
         )
 
-ALLOWED_HOSTS = [
-    h.strip() for h in os.getenv('ALLOWED_HOSTS', '*' if DEBUG else 'localhost').split(',') if h.strip()
-]
+_allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '').strip()
+if not _allowed_hosts_env:
+    if DEBUG:
+        ALLOWED_HOSTS = ['*']
+    else:
+        raise RuntimeError(
+            "ALLOWED_HOSTS env var is required in production. "
+            "Set it to your domain(s), e.g. ALLOWED_HOSTS=api.example.com"
+        )
+else:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()]
 
 CSRF_TRUSTED_ORIGINS = [
     o.strip() for o in os.getenv(
@@ -38,6 +69,9 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_REFERRER_POLICY = 'same-origin'
     X_FRAME_OPTIONS = 'DENY'
+    SECURE_HSTS_SECONDS = 31536000          # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 INSTALLED_APPS = [
     'daphne',
@@ -68,10 +102,15 @@ _cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '').strip()
 if _cors_origins:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
     CORS_ALLOW_ALL_ORIGINS = False
-else:
+elif DEBUG:
     # Dev convenience: wide open when no explicit allow-list is configured.
-    # In production, set CORS_ALLOWED_ORIGINS to your frontend origin(s).
     CORS_ALLOW_ALL_ORIGINS = True
+else:
+    # Production without CORS_ALLOWED_ORIGINS set — fail loudly rather than open the API.
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS must be set in production (DEBUG=False). "
+        "Example: CORS_ALLOWED_ORIGINS=https://app.yourdomain.com"
+    )
 
 ROOT_URLCONF = 'backend.urls'
 TEMPLATES = [
@@ -94,7 +133,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 ASGI_APPLICATION = 'backend.asgi.application'
 
 DATABASES = {
-    'default': dj_database_url.config(default='postgres://vox_user:vox_pass@db:5432/vox_db')
+    'default': dj_database_url.config(
+        default='postgres://vox_user:vox_pass@db:5432/vox_db',
+        conn_max_age=600,        # Reuse DB connections for 10 min — prevents exhaustion at scale
+        conn_health_checks=True, # Verify connection is alive before reuse
+    )
 }
 
 CHANNEL_LAYERS = {
@@ -114,8 +157,8 @@ CACHES = {
     }
 }
 
-FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB
-DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024    # 5 MB — matches _MAX_RESUME_BYTES in views.py
+DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024    # 6 MB — slight headroom for multipart envelope
 
 AUTH_PASSWORD_VALIDATORS = []
 LANGUAGE_CODE = 'en-us'

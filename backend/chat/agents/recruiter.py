@@ -89,7 +89,7 @@ class RecruiterAgent(BaseAgent):
             logger.warning("[Recruiter] JD too short (%d chars) — using fallback", len(jd or ""))
             return self._fallback(jd, candidate_name)
 
-        prompt = f"{_JD_PARSE_SYSTEM}\n\nParse this JD:\n\n{jd[:3000]}"
+        prompt = f"{_JD_PARSE_SYSTEM}\n\nParse this JD:\n\n{jd[:4000]}"
         resp = await self.gemini.aio.models.generate_content(
             model=_GEMINI_MODEL,
             contents=prompt,

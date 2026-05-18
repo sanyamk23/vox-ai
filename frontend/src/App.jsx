@@ -8,6 +8,7 @@ import AboutPage from './pages/AboutPage';
 import FeaturesPage from './pages/FeaturesPage';
 import DashboardPage from './pages/DashboardPage';
 import VoiceChat from './components/VoiceChat';
+import CustomCursor from './components/CustomCursor';
 
 function AnimatedRoutes() {
   const location = useLocation();
@@ -28,6 +29,7 @@ function AnimatedRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
+      <CustomCursor />
       <Navbar />
       <AnimatedRoutes />
     </BrowserRouter>
