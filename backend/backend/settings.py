@@ -68,10 +68,14 @@ _cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '').strip()
 if _cors_origins:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
     CORS_ALLOW_ALL_ORIGINS = False
-else:
+elif DEBUG:
     # Dev convenience: wide open when no explicit allow-list is configured.
-    # In production, set CORS_ALLOWED_ORIGINS to your frontend origin(s).
     CORS_ALLOW_ALL_ORIGINS = True
+else:
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS must be set in production (DEBUG=False). "
+        "Example: CORS_ALLOWED_ORIGINS=https://app.yourdomain.com"
+    )
 
 ROOT_URLCONF = 'backend.urls'
 TEMPLATES = [

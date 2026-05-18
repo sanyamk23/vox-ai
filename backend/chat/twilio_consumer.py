@@ -242,7 +242,13 @@ class TwilioConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         print(f"[Twilio] Disconnected (code={close_code})")
         if hasattr(self, "bridge"):
+            call_sid = getattr(self.bridge, "_call_sid", "")
             self.bridge.close()
+            # Mark call ended immediately so the UI poll can detect it within seconds,
+            # before the slow evaluation/DB write completes (can take 10-30s)
+            if call_sid:
+                await sync_to_async(cache.set)(f"vox:ended:{call_sid}", True, timeout=3600)
+                print(f"[Twilio] Marked call {call_sid} as ended in cache")
         if hasattr(self, "_bridge_task") and not self._bridge_task.done():
             try:
                 # Wait for the bridge to finalize naturally so _finalize() runs:
@@ -265,14 +271,9 @@ class TwilioConsumer(AsyncWebsocketConsumer):
         except json.JSONDecodeError:
             return
 
-        # Ensure bridge is initialized before enqueuing
         if hasattr(self, "bridge") and self.bridge:
+            # enqueue_twilio_event already guards against a closed bridge internally
             self.bridge.enqueue_twilio_event(data)
-        else:
-            # If we get media before bridge is ready, it's rare but possible
-            event = data.get("event")
-            if event == "media":
-                pass # Drop or could buffer if critical
 
     async def _send_twilio_json(self, payload: dict) -> None:
         await self.send(text_data=json.dumps(payload))

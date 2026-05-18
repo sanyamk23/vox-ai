@@ -158,7 +158,7 @@ def _place_call(
     if recruiter_inputs:
         session_data["recruiter_inputs"] = recruiter_inputs
 
-    cache.set(f"vox:{token}", session_data, timeout=3600)
+    cache.set(f"vox:{token}", session_data, timeout=86400)
     stream_path = _media_stream_path(use_legacy_ws_prefix)
     # Embed name + phone in the URL so the consumer always has them as a
     # fallback even if the Redis cache misses on WebSocket connect
@@ -198,7 +198,7 @@ def _place_call(
         "from_number":      from_number,
         "prior_transcript": prior_transcript or [],
         "prior_notes":      prior_notes or {},
-    }, timeout=3600)
+    }, timeout=86400)
 
     return {"status": "Call initiated", "call_sid": call.sid, "stream_url": stream_url, "token": token}
 
@@ -404,7 +404,8 @@ def call_status_webhook(request):
     session = cache.get(f"vox:call:{call_sid}")
     if not session:
         logger.warning("[CallStatus] No session data for CallSid=%s — cannot retry", call_sid)
-        return HttpResponse(status=204)
+        # Return 500 so Twilio retries the webhook delivery (in case Redis had a transient miss)
+        return HttpResponse(status=500)
 
     phone       = session.get("phone", "")
     name        = session.get("name", "Candidate")
@@ -457,19 +458,30 @@ def call_status_webhook(request):
     return HttpResponse(status=204)
 
 
+_LIST_PAGE_SIZE = 50
+
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def list_sessions(request):
-    """GET /api/sessions/ — return an analytics-aware list of past candidate calls."""
+    """GET /api/sessions/?limit=50&offset=0 — paginated list of past candidate calls."""
     from .models import CallSession
 
     try:
-        sessions = CallSession.objects.all().order_by("-created_at")
+        limit  = min(int(request.GET.get("limit",  _LIST_PAGE_SIZE)), 200)
+        offset = max(int(request.GET.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"status": "error", "message": "limit/offset must be integers"}, status=400)
+
+    try:
+        qs = CallSession.objects.all().order_by("-created_at")
+        total = qs.count()
+        sessions = qs[offset : offset + limit]
     except Exception:
         return JsonResponse({"status": "error", "message": "DB unavailable"}, status=500)
 
-    outcome_counts = {}
-    compatibility_counts = {}
+    outcome_counts: dict[str, int] = {}
+    compatibility_counts: dict[str, int] = {}
     total_score = 0
     score_count = 0
     total_confidence = 0.0
@@ -513,7 +525,7 @@ def list_sessions(request):
             "dimension_scores": session.dimension_scores,
             "eval_reasoning": session.eval_reasoning,
             "transcript_length": len(session.transcript or []),
-            "transcript": session.transcript,
+            # Full transcript is excluded from the list view — fetch /api/session/<sid>/ for it
         })
 
     average_score = round(total_score / score_count, 1) if score_count else None
@@ -521,7 +533,9 @@ def list_sessions(request):
 
     return JsonResponse({
         "status": "success",
-        "total_sessions": len(payload),
+        "total_sessions": total,
+        "limit": limit,
+        "offset": offset,
         "outcome_counts": outcome_counts,
         "compatibility_counts": compatibility_counts,
         "average_score": average_score,
@@ -531,11 +545,29 @@ def list_sessions(request):
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
+def end_call(request, call_sid: str):
+    """POST /api/call/<call_sid>/end/ — hang up an active Twilio call from the UI."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token  = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    if not (account_sid and auth_token):
+        return JsonResponse({"status": "error", "message": "Twilio not configured"}, status=500)
+    try:
+        client = Client(account_sid, auth_token)
+        client.calls(call_sid).update(status="completed")
+        return JsonResponse({"status": "ok"})
+    except Exception as e:
+        logger.warning("[EndCall] %s: %s", call_sid, e)
+        return JsonResponse({"status": "error", "message": str(e)}, status=500)
+
+
+@csrf_exempt
 @require_http_methods(["GET"])
 def session_status(request, call_sid: str):
     """
     GET /api/session/<call_sid>/ — poll for post-call evaluation results.
-    Returns 202 while evaluation is still running, 200 when complete.
+    Returns 202 while the call is live, 200+evaluating once call ends but
+    evaluation is still running, 200+complete when the DB record exists.
     """
     from .models import CallSession
 
@@ -544,14 +576,18 @@ def session_status(request, call_sid: str):
     except Exception:
         return JsonResponse({"status": "error", "message": "DB unavailable"}, status=500)
 
-    if not session:
-        return JsonResponse({"status": "pending"}, status=202)
+    if session:
+        return JsonResponse({
+            "status": "complete",
+            "score": session.intent_score,
+            "call_outcome": session.call_outcome,
+            "notes": session.notes,
+            "candidate_summary": session.candidate_summary,
+            "eval_confidence": session.eval_confidence,
+        })
 
-    return JsonResponse({
-        "status": "complete",
-        "score": session.intent_score,
-        "call_outcome": session.call_outcome,
-        "notes": session.notes,
-        "candidate_summary": session.candidate_summary,
-        "eval_confidence": session.eval_confidence,
-    })
+    # Call has ended but evaluation hasn't saved to DB yet
+    if cache.get(f"vox:ended:{call_sid}"):
+        return JsonResponse({"status": "evaluating"})
+
+    return JsonResponse({"status": "pending"}, status=202)

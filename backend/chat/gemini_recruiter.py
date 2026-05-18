@@ -279,8 +279,9 @@ class GeminiLiveBridge:
         self._interview_context = interview_context
         self._resume_text = resume_text
 
-        self._inbound_twilio: asyncio.Queue[dict] = asyncio.Queue()
-        self._inbound_pcm: asyncio.Queue[bytes] = asyncio.Queue()
+        # maxsize prevents unbounded memory growth if Gemini falls behind
+        self._inbound_twilio: asyncio.Queue[dict] = asyncio.Queue(maxsize=500)
+        self._inbound_pcm: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
         self._closed = asyncio.Event()
         self._greeting_sent = False
         self.stream_sid: str | None = None
@@ -291,6 +292,8 @@ class GeminiLiveBridge:
         self._call_duration: float = 0.0
         self._finalized: bool = False
         self._goodbye_task: asyncio.Task | None = None
+        # mulaw inbound accumulator — initialized here, never lazily, to avoid race conditions
+        self._audio_buffer: bytes = b""
         if on_transcript:
             self._transcript_agg = TurnTranscriptAggregator(
                 on_flush=self._emit_transcript_turn,
@@ -300,19 +303,30 @@ class GeminiLiveBridge:
         self._close_task: asyncio.Task | None = None
 
     def enqueue_twilio_event(self, data: dict) -> None:
-        self._inbound_twilio.put_nowait(data)
+        if self._closed.is_set():
+            return  # bridge already shut down — drop late Twilio events silently
+        try:
+            self._inbound_twilio.put_nowait(data)
+        except asyncio.QueueFull:
+            # Non-media control events (start/stop) must never be dropped
+            event = data.get("event", "")
+            if event in ("stop", "start", "connected"):
+                self._inbound_twilio.get_nowait()  # evict oldest (a media chunk)
+                self._inbound_twilio.put_nowait(data)
+            # media frames: silently drop under back-pressure
 
     def feed_pcm(self, chunk: bytes) -> None:
         if chunk:
             self._inbound_pcm.put_nowait(chunk)
     async def _emit_transcript_turn(self, role: str, sentence: str) -> None:
         if role == "vox" and "[END_CALL]" in sentence:
-            print("[Gemini] End-of-call signal detected. Scheduling close...")
             sentence = sentence.replace("[END_CALL]", "").strip()
-            self._ending = True
-            if self._close_task:
-                self._close_task.cancel()
-            self._close_task = asyncio.create_task(self._delayed_close(6.0))
+            if not self._ending:
+                # Only schedule the first time — subsequent [END_CALL] fragments from
+                # the same turn's transcription should not keep resetting the timer.
+                print("[Gemini] End-of-call signal detected. Scheduling close...")
+                self._ending = True
+                self._close_task = asyncio.create_task(self._delayed_close(6.0))
 
         if not sentence:
             return
@@ -368,10 +382,13 @@ class GeminiLiveBridge:
                     disabled=False,
                     # Detect speech quickly so the bot stops almost instantly
                     start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
-                    # Don't wait too long after candidate pauses before responding
-                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                    prefix_padding_ms=0,
-                    silence_duration_ms=150,
+                    # MEDIUM avoids triggering on natural mid-sentence pauses
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_MEDIUM,
+                    # 100ms buffer catches the very beginning of words
+                    prefix_padding_ms=100,
+                    # 500ms matches natural inter-sentence pause length on phone calls;
+                    # 150ms was cutting off users mid-sentence constantly
+                    silence_duration_ms=500,
                 ),
             ),
         )
@@ -383,7 +400,7 @@ class GeminiLiveBridge:
         outbound_mulaw_buffer = b""
 
         async with ai_client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=config) as gemini_session:
-            print(f"[Gemini] Live session established ({self._mode}).")
+            print(f"[Gemini] Live session established ({self._mode}). Model={GEMINI_LIVE_MODEL} OutputRate={WEB_OUTPUT_RATE}Hz")
 
             async def _send_greeting() -> None:
                 if self._greeting_sent:
@@ -458,23 +475,21 @@ class GeminiLiveBridge:
                             if not payload:
                                 continue
 
-                            # Buffer 20ms (160 bytes) — smaller buffer = faster interruption detection
-                            mulaw_chunk = base64.b64decode(payload)
-                            if not hasattr(self, '_audio_buffer'):
-                                self._audio_buffer = b""
+                            self._audio_buffer += base64.b64decode(payload)
 
-                            self._audio_buffer += mulaw_chunk
-
-                            if len(self._audio_buffer) >= 160: # 20ms at 8k mono
-                                pcm_8k = audioop.ulaw2lin(self._audio_buffer, 2)
-                                self._audio_buffer = b""
+                            # Process in exact 160-byte (20ms mulaw) chunks so each PCM
+                            # frame sent to Gemini has a consistent size; leftover bytes
+                            # accumulate until the next packet fills them out.
+                            while len(self._audio_buffer) >= 160:
+                                pcm_8k = audioop.ulaw2lin(self._audio_buffer[:160], 2)
+                                self._audio_buffer = self._audio_buffer[160:]
 
                                 pcm_16k, inbound_resample_state = audioop.ratecv(
                                     pcm_8k, 2, 1, 8000, 16000, inbound_resample_state
                                 )
                                 inbound_frame_count += 1
-                                if inbound_frame_count % 50 == 0: # Every 2 seconds
-                                    print("[Twilio->Gemini] Sending 40ms audio blocks.")
+                                if inbound_frame_count % 100 == 0:
+                                    print(f"[Twilio->Gemini] {inbound_frame_count} frames sent.")
 
                                 await gemini_session.send_realtime_input(
                                     audio=types.Blob(data=pcm_16k, mime_type="audio/pcm;rate=16000")
@@ -571,24 +586,28 @@ class GeminiLiveBridge:
                                             await self._on_transcript("user", it.text)
 
                                 if sc.turn_complete:
-                                    # Flush any remaining bytes so the tail of each
-                                    # AI response is never silently swallowed
+                                    # Flush remaining bytes in proper 160-byte (20ms) chunks so
+                                    # Twilio's jitter buffer doesn't produce a pop/click at turn end
                                     if (
                                         outbound_mulaw_buffer
                                         and self._mode == "twilio"
                                         and self.stream_sid
                                         and self._send_twilio_json
                                     ):
-                                        await self._send_twilio_json({
-                                            "event": "media",
-                                            "streamSid": self.stream_sid,
-                                            "media": {
-                                                "payload": base64.b64encode(
-                                                    outbound_mulaw_buffer
-                                                ).decode("utf-8")
-                                            },
-                                        })
-                                        outbound_mulaw_buffer = b""
+                                        while len(outbound_mulaw_buffer) >= 160:
+                                            await self._send_twilio_json({
+                                                "event": "media",
+                                                "streamSid": self.stream_sid,
+                                                "media": {"payload": base64.b64encode(outbound_mulaw_buffer[:160]).decode("utf-8")},
+                                            })
+                                            outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
+                                        if outbound_mulaw_buffer:
+                                            await self._send_twilio_json({
+                                                "event": "media",
+                                                "streamSid": self.stream_sid,
+                                                "media": {"payload": base64.b64encode(outbound_mulaw_buffer).decode("utf-8")},
+                                            })
+                                            outbound_mulaw_buffer = b""
                                     if agg:
                                         await agg.on_turn_complete()
 
@@ -598,8 +617,11 @@ class GeminiLiveBridge:
                                         "interrupted by candidate speech."
                                     )
                                     # Drop buffered audio and clear Twilio's playout queue
-                                    # so the bot's voice cuts off the instant the candidate speaks
+                                    # so the bot's voice cuts off the instant the candidate speaks.
+                                    # Reset resample state too — stale state from the interrupted
+                                    # turn would corrupt the pitch of the next AI response.
                                     outbound_mulaw_buffer = b""
+                                    outbound_resample_state = None
                                     if (
                                         self._mode == "twilio"
                                         and self.stream_sid
@@ -661,6 +683,9 @@ class GeminiLiveBridge:
                 await self._on_call_ended(was_dropped, self._call_duration)
             except Exception as exc:
                 print(f"[Gemini] on_call_ended callback failed: {exc}")
+
+        # Release inbound audio buffer memory
+        self._audio_buffer = b""
 
         # DB save + scorecard (slow — runs after retry is already scheduled)
         try:

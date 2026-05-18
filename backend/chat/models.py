@@ -2,9 +2,9 @@ from django.db import models
 
 
 class CallSession(models.Model):
-    call_sid = models.CharField(max_length=100, blank=True, default='')
+    call_sid = models.CharField(max_length=100, blank=True, default='', db_index=True)
     candidate_name = models.CharField(max_length=200, default='Candidate')
-    candidate_phone = models.CharField(max_length=20, blank=True, default='')
+    candidate_phone = models.CharField(max_length=20, blank=True, default='', db_index=True)
     job_description = models.TextField(blank=True, default='')
     resume_text = models.TextField(blank=True, default='')
     transcript = models.JSONField(default=list)
@@ -40,6 +40,9 @@ class CallSession(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at'], name='callsession_created_at_idx'),
+        ]
 
     def __str__(self):
         return f"{self.candidate_name} | {self.call_outcome} | {self.created_at:%Y-%m-%d %H:%M}"

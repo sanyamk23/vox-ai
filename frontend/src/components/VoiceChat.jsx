@@ -127,6 +127,7 @@ export default function VoiceChat() {
   const fileInputRef = useRef(null);
   const pollRef      = useRef(null);
   const wsRef        = useRef(null);
+  const callSidRef   = useRef(null);
   const [bars, setBars] = useState(Array(20).fill(0));
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
@@ -188,8 +189,12 @@ export default function VoiceChat() {
   }, []);
 
   const cleanup = useCallback(() => {
+    // Hang up the Twilio call so the phone actually stops ringing
+    if (callSidRef.current) {
+      fetch(`${API_BASE}/api/call/${callSidRef.current}/end/`, { method: 'POST' }).catch(() => {});
+    }
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-    clearInterval(pollRef.current);
+    // Keep polling so the evaluation scorecard still appears when it's ready
     setBars(Array(20).fill(0));
     setStatus('ended');
     setConnectingType(null);
@@ -209,9 +214,12 @@ export default function VoiceChat() {
       if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
       try {
         const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
-        if (r.status === 202) return; // still pending
+        if (r.status === 202) return; // call still live
         const data = await r.json();
-        if (data.status === 'complete') {
+        if (data.status === 'evaluating') {
+          // Call has ended — transition UI immediately, keep polling for scorecard
+          setStatus('ended');
+        } else if (data.status === 'complete') {
           clearInterval(pollRef.current);
           const reason = JSON.stringify({ ...(data.notes || {}), candidate_summary: data.candidate_summary });
           setRecap({ score: data.score, reason });
@@ -262,6 +270,7 @@ export default function VoiceChat() {
       const res = await r.json();
       if (res.status === 'success') {
         const sid = res.call_sid;
+        callSidRef.current = sid;
         setMessages([{ role: 'system', text: `Outbound call initiated → ${name || phone} · SID ${sid}`, time: nowTime() }]);
         setStatus('connected');
         // Poll for evaluation results — backend saves DB record after call ends
@@ -562,7 +571,7 @@ export default function VoiceChat() {
               </div>
             )}
             {(isLive || isDone) && (
-              <button onClick={() => { clearInterval(pollRef.current); setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
+              <button onClick={() => { clearInterval(pollRef.current); callSidRef.current = null; setStatus('idle'); setMessages([]); setRecap(null); setElapsed(0); setJd(''); setStructuredFields(EMPTY_STRUCTURED); clearResume(); }}
                 className="w-full mt-3 py-2 font-mono text-[10px] text-cream/40 hover:text-cream uppercase tracking-widest transition-colors">
                 Start New Session
               </button>
