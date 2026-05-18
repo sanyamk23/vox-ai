@@ -187,8 +187,15 @@ export default function VoiceChat() {
     setResumeError('');
     const form = new FormData();
     form.append('resume', file);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
     try {
-      const r = await fetch(`${API_BASE}/api/upload-resume/`, { method: 'POST', body: form });
+      const r = await fetch(`${API_BASE}/api/upload-resume/`, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       const res = await r.json();
       if (res.status === 'success') {
         setResumeText(res.text);
@@ -197,9 +204,10 @@ export default function VoiceChat() {
         setResumeStatus('error');
         setResumeError(res.message || 'Upload failed');
       }
-    } catch {
+    } catch (err) {
+      clearTimeout(timeoutId);
       setResumeStatus('error');
-      setResumeError('Network error — check connection');
+      setResumeError(err?.name === 'AbortError' ? 'Upload timed out — try a smaller file' : 'Network error — check connection');
     }
   }, []);
 
@@ -232,14 +240,31 @@ export default function VoiceChat() {
     if (!callSid?.trim()) return;
     clearInterval(pollRef.current);
     let attempts = 0;
+    let consecutiveErrors = 0;
     // 300 attempts × 5s = 25 minutes — covers 20-min call + evaluation time (~30s)
     const MAX_ATTEMPTS = 300;
+    const MAX_CONSECUTIVE_ERRORS = 10; // ~50s of consecutive failures = backend is gone
     pollRef.current = setInterval(async () => {
       attempts++;
-      if (attempts > MAX_ATTEMPTS) { clearInterval(pollRef.current); return; }
+      if (attempts > MAX_ATTEMPTS) {
+        clearInterval(pollRef.current);
+        showToast('Evaluation timed out — check dashboard for results', 'info');
+        setStatus('ended');
+        return;
+      }
       try {
         const r = await fetch(`${API_BASE}/api/session/${callSid}/`);
-        if (r.status === 202) return; // call still live — keep polling
+        if (r.status === 202) { consecutiveErrors = 0; return; } // call still live — keep polling
+        if (!r.ok && r.status !== 200) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            clearInterval(pollRef.current);
+            showToast('Lost connection to backend — results will appear in the dashboard');
+            setStatus('ended');
+          }
+          return;
+        }
+        consecutiveErrors = 0;
         const data = await r.json();
         if (data.status === 'evaluating') {
           // Call has ended — transition UI immediately, keep polling for scorecard
@@ -250,9 +275,17 @@ export default function VoiceChat() {
           setRecap({ score: data.score, reason });
           setStatus('ended');
         }
-      } catch { /* network blip — keep polling */ }
+      } catch {
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          clearInterval(pollRef.current);
+          showToast('Lost connection to backend — results will appear in the dashboard');
+          setStatus('ended');
+        }
+        // else: network blip — keep polling
+      }
     }, 5000);
-  }, []);
+  }, [showToast]);
 
   const triggerCall = useCallback(async () => {
     setStatus('connecting');
@@ -301,8 +334,16 @@ export default function VoiceChat() {
         setStatus('connected');
         // Poll for evaluation results — backend saves DB record after call ends
         _startPolling(sid);
-      } else { alert(res.message); setStatus('idle'); setConnectingType(null); }
-    } catch { alert('Backend unreachable.'); setStatus('idle'); setConnectingType(null); }
+      } else {
+        showToast(res.message || 'Failed to initiate call');
+        setStatus('idle');
+        setConnectingType(null);
+      }
+    } catch {
+      showToast('Backend unreachable — check your connection');
+      setStatus('idle');
+      setConnectingType(null);
+    }
   }, [phone, jd, name, inputMode, structuredFields, resumeText, selectedVoiceId, voices, _startPolling]);
 
   const report = recap ? (() => {

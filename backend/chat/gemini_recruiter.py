@@ -502,8 +502,16 @@ class GeminiLiveBridge:
             self._schedule_end(delay=0)
 
     async def run(self) -> None:
+        # Hard ceiling on total bridge lifetime, including Gemini connect time.
+        # If _run_inner hangs (e.g. Gemini API never responds), this aborts it.
+        # _MAX_CALL_SECONDS starts from Twilio "start"; this timeout covers the
+        # entire bridge including the pre-stream Gemini connection phase.
+        _BRIDGE_TIMEOUT = _MAX_CALL_SECONDS + 120  # 25 min + 2 min connection headroom
         try:
-            await self._run_inner()
+            await asyncio.wait_for(self._run_inner(), timeout=_BRIDGE_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error("[Gemini] Bridge hard timeout (%.0fmin) — forcing close", _BRIDGE_TIMEOUT / 60)
+            self._closed.set()
         except Exception as exc:
             logger.error("[Gemini] Session failed: %s", exc, exc_info=True)
         finally:
