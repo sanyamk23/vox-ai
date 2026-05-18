@@ -26,7 +26,4 @@ USER vox
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/ > /dev/null || exit 1
-
 CMD ["./entrypoint.sh"]

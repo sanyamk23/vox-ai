@@ -17,6 +17,9 @@ from twilio.rest import Client
 
 logger = logging.getLogger(__name__)
 
+# Strong-reference set so background tasks are not silently GC-cancelled
+_BACKGROUND_TASKS: set = set()
+
 _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 _SANITIZE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MAX_JD_LENGTH = 4000
@@ -447,7 +450,7 @@ async def initiate_call(request):
 
     # Rate limit: 10 call initiations per IP per minute
     client_ip = _get_client_ip(request)
-    if _rate_limit(f"call:{client_ip}", max_calls=10, window_seconds=60):
+    if await sync_to_async(_rate_limit)(f"call:{client_ip}", max_calls=10, window_seconds=60):
         logger.warning("[RateLimit] /api/call/ blocked for IP=%s", client_ip)
         return JsonResponse(
             {"status": "error", "message": "Too many requests — please wait a moment"}, status=429
@@ -516,7 +519,7 @@ async def initiate_call(request):
             )
 
         # Dedup: prevent double-dialling if a call to this number is still active
-        if _is_call_already_active(to_number):
+        if await sync_to_async(_is_call_already_active)(to_number):
             logger.warning("[Call] Duplicate call attempt to %s within 60s — rejected", to_number)
             return JsonResponse(
                 {"status": "error", "message": "A call to this number is already in progress — please wait"},
@@ -541,9 +544,11 @@ async def initiate_call(request):
         )
 
         # Pre-parse JD while phone rings — result will be in cache before candidate answers
-        asyncio.create_task(
+        _t = asyncio.create_task(
             _precache_interview_context(result["token"], jd, name, recruiter_inputs)
         )
+        _BACKGROUND_TASKS.add(_t)
+        _t.add_done_callback(_BACKGROUND_TASKS.discard)
 
         return JsonResponse({"status": "success", "call_sid": result["call_sid"]})
 

@@ -377,7 +377,6 @@ class GeminiLiveBridge:
         # Server-side security counters — not configurable by any caller
         self._jb_attempts: int = 0        # jailbreak phrases detected in candidate speech
         self._output_compromised: bool = False  # True if Priya's output leaked forbidden content
-        self._audio_buffer: bytes = b""   # inbound mulaw buffer — declared here, not lazily in hot path
 
     def enqueue_twilio_event(self, data: dict) -> None:
         if self._closed.is_set():
