@@ -615,7 +615,17 @@ class GeminiLiveBridge:
                                     self._max_duration_hangup(_MAX_CALL_SECONDS)
                                 )
                             # Greeting was already sent at session open — flush any
-                            # audio Gemini generated before the stream was ready
+                            # audio Gemini generated before the stream was ready.
+                            # Send in 160-byte (20ms) chunks to avoid blasting Twilio's
+                            # jitter buffer with a multi-second blob all at once.
+                            _flush = len(outbound_mulaw_buffer)
+                            while len(outbound_mulaw_buffer) >= 160:
+                                await self._send_twilio_json({
+                                    "event": "media",
+                                    "streamSid": self.stream_sid,
+                                    "media": {"payload": base64.b64encode(outbound_mulaw_buffer[:160]).decode("utf-8")},
+                                })
+                                outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
                             if outbound_mulaw_buffer:
                                 await self._send_twilio_json({
                                     "event": "media",
@@ -623,7 +633,8 @@ class GeminiLiveBridge:
                                     "media": {"payload": base64.b64encode(outbound_mulaw_buffer).decode("utf-8")},
                                 })
                                 outbound_mulaw_buffer = b""
-                                logger.info("[Twilio] Flushed pre-stream greeting audio — no gap on answer.")
+                            if _flush:
+                                logger.info("[Twilio] Flushed %d bytes pre-stream greeting audio in 160-byte chunks.", _flush)
                         elif event == "media":
                             payload = data.get("media", {}).get("payload", "")
                             if not payload:
@@ -682,18 +693,21 @@ class GeminiLiveBridge:
                                     # Only forward once the Twilio stream is open.
                                     # Audio generated before "start" accumulates here
                                     # and is flushed in inbound_to_gemini when "start" fires.
+                                    # Send ONLY complete 160-byte (20ms mulaw) chunks — Gemini
+                                    # may return tiny packets; irregular small sends cause
+                                    # Twilio's jitter buffer to stutter and produce choppy audio.
                                     if self.stream_sid:
-                                        if outbound_mulaw_buffer:
+                                        while len(outbound_mulaw_buffer) >= 160:
                                             await self._send_twilio_json({
                                                 "event": "media",
                                                 "streamSid": self.stream_sid,
                                                 "media": {
                                                     "payload": base64.b64encode(
-                                                        outbound_mulaw_buffer
+                                                        outbound_mulaw_buffer[:160]
                                                     ).decode("utf-8")
                                                 },
                                             })
-                                            outbound_mulaw_buffer = b""
+                                            outbound_mulaw_buffer = outbound_mulaw_buffer[160:]
 
                             if response.server_content:
                                 sc = response.server_content
