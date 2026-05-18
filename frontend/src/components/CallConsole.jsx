@@ -22,17 +22,19 @@ import {
   Zap
 } from 'lucide-react';
 
-export default function CallConsole({ 
-  name, 
-  phone, 
-  elapsed, 
-  messages, 
-  endRef, 
-  onEnd, 
-  bars, 
+export default function CallConsole({
+  name,
+  phone,
+  elapsed,
+  messages,
+  endRef,
+  onEnd,
+  bars,
   fmt,
-  status 
+  status,
+  voiceName,
 }) {
+  const displayVoiceName = voiceName || 'AI';
   // Persistence for the furthest phase reached
   const [furthestPhase, setFurthestPhase] = useState(0);
 
@@ -149,7 +151,7 @@ export default function CallConsole({
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold font-mono uppercase tracking-widest text-cream/40">Admin</span>
                 <div className="w-10 h-10 rounded-2xl bg-white/10 overflow-hidden border border-white/20 shadow-lg backdrop-blur-md hover:border-neon/50 transition-colors cursor-pointer p-0.5">
-                   <img className="rounded-xl w-full h-full object-cover" src={`https://ui-avatars.com/api/?name=${name || 'Clarix'}&background=6FFF00&color=010828&bold=true`} alt="Profile" />
+                   <img className="rounded-xl w-full h-full object-cover" src={`https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Clarix')}&background=6FFF00&color=010828&bold=true`} alt="Profile" />
                 </div>
               </div>
             </div>
@@ -236,7 +238,7 @@ export default function CallConsole({
                  <div className="text-center z-10 space-y-12 w-full px-12">
                     <div className="space-y-4">
                       <p className="text-[11px] font-black text-neon uppercase tracking-[0.6em] opacity-80 animate-pulse">Neural Link Active</p>
-                      <h4 className="text-6xl font-black text-cream tracking-tighter font-grotesk uppercase">Priya AI</h4>
+                      <h4 className="text-6xl font-black text-cream tracking-tighter font-grotesk uppercase">{displayVoiceName} AI</h4>
                     </div>
 
                     {/* Waveform Visualizer */}
@@ -287,7 +289,7 @@ export default function CallConsole({
                             className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}
                           >
                             <div className="flex items-center gap-2 mb-2">
-                              <span className="text-[9px] font-black text-neon uppercase tracking-tighter">{m.role === 'user' ? (name || 'CANDIDATE') : 'PRIYA AI'}</span>
+                              <span className="text-[9px] font-black text-neon uppercase tracking-tighter">{m.role === 'user' ? (name || 'CANDIDATE') : `${displayVoiceName} AI`}</span>
                               <span className="text-[9px] text-cream/30 font-mono">{m.time || nowTime()}</span>
                             </div>
                             <div className={`text-[13px] font-mono font-medium leading-relaxed p-4 rounded-3xl border shadow-2xl ${

@@ -141,6 +141,8 @@ export default function VoiceChat() {
   const [bars, setBars] = useState(Array(20).fill(0));
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
+  const selectedVoice = voices.find(v => v.id === selectedVoiceId);
+  const voiceDisplayName = (selectedVoice?.display_name || 'AI').toUpperCase();
 
   const showToast = useCallback((message, type = 'error') => {
     setToast({ message, type });
@@ -368,6 +370,7 @@ export default function VoiceChat() {
         bars={bars}
         fmt={fmt}
         status={status}
+        voiceName={voiceDisplayName}
       />
     );
   }
@@ -383,21 +386,6 @@ export default function VoiceChat() {
 
   return (
     <div className="relative min-h-screen bg-background text-cream overflow-hidden font-sans selection:bg-neon selection:text-background">
-      {/* Texture Overlay */}
-      <div
-        className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
-        style={{ backgroundImage: 'url(/texture.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      />
-
-      {/* Background Video */}
-      <div className="fixed inset-0 z-0 opacity-20">
-        <video
-          className="absolute inset-0 w-full h-full object-cover"
-          autoPlay loop muted playsInline
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_151551_992053d1-3d3e-4b8c-abac-45f22158f411.mp4"
-        />
-        <div className="absolute inset-0 bg-background/40" />
-      </div>
       {/* Texture Overlay */}
       <div
         className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
@@ -704,7 +692,7 @@ export default function VoiceChat() {
                   ) : (
                     <div className="flex flex-col gap-1.5 max-w-[85%]">
                       <span className={`font-mono text-[10px] uppercase tracking-widest ${m.role === 'user' ? 'text-cream/50 text-right' : 'text-neon text-left'}`}>
-                        {m.role === 'user' ? (name || 'CANDIDATE') : 'PRIYA AI'}
+                        {m.role === 'user' ? (name || 'CANDIDATE') : voiceDisplayName}
                       </span>
                       <div className={`font-mono text-[13px] leading-relaxed px-5 py-4 shadow-sm ${m.role === 'user' ? 'bg-cream text-background rounded-[20px] rounded-tr-sm' : 'liquid-glass text-cream rounded-[20px] rounded-tl-sm'}`}>
                         {m.text}
