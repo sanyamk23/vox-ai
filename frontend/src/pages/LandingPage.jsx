@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -7,7 +7,27 @@ import {
   useTransform,
   useMotionValue,
   useSpring,
+  useInView,
+  useMotionTemplate,
 } from 'framer-motion';
+
+// ─── Animated film grain ──────────────────────────────────────────────────────
+function AnimatedGrain() {
+  return (
+    <div className="fixed inset-0 z-[300] pointer-events-none overflow-hidden opacity-[0.045] mix-blend-overlay select-none">
+      <svg
+        className="absolute -inset-[100%] w-[400%] h-[400%] animate-grain"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <filter id="grain-noise">
+          <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" />
+          <feColorMatrix type="saturate" values="0" />
+        </filter>
+        <rect width="100%" height="100%" filter="url(#grain-noise)" />
+      </svg>
+    </div>
+  );
+}
 
 // ─── Scroll progress bar ──────────────────────────────────────────────────────
 function ScrollProgress() {
@@ -54,6 +74,107 @@ function Reveal({ children, delay = 0, y = 50, className = '' }) {
   );
 }
 
+// ─── Character-by-character text reveal ──────────────────────────────────────
+function SplitText({ text, className = '', stagger = 0.025, delay = 0 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-60px' });
+  return (
+    <span ref={ref} className={className} aria-label={text} style={{ perspective: '600px' }}>
+      {text.split('').map((char, i) => (
+        <motion.span
+          key={i}
+          className="inline-block"
+          style={{ transformOrigin: 'bottom center' }}
+          initial={{ y: '105%', opacity: 0, rotateX: -70 }}
+          animate={inView ? { y: 0, opacity: 1, rotateX: 0 } : {}}
+          transition={{ duration: 0.65, delay: delay + i * stagger, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {char === ' ' ? ' ' : char}
+        </motion.span>
+      ))}
+    </span>
+  );
+}
+
+// ─── Hacker-scramble heading ──────────────────────────────────────────────────
+const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*';
+function ScrambleText({ text, className = '' }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-60px' });
+  const [displayed, setDisplayed] = useState(text);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!inView || startedRef.current) return;
+    startedRef.current = true;
+    let frame = 0;
+    const total = 22;
+    const cleanLen = text.replace(/ /g, '').length;
+    const id = setInterval(() => {
+      frame++;
+      setDisplayed(
+        text.split('').map((ch, i) => {
+          if (ch === ' ') return ch;
+          const charIndex = text.slice(0, i).replace(/ /g, '').length;
+          const revealAt = (charIndex / cleanLen) * total * 0.6;
+          if (frame > revealAt + total * 0.4) return ch;
+          return GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+        }).join('')
+      );
+      if (frame >= total) { setDisplayed(text); clearInterval(id); }
+    }, 55);
+    return () => clearInterval(id);
+  }, [inView, text]);
+
+  return <span ref={ref} className={className}>{displayed}</span>;
+}
+
+// ─── Scroll-triggered count-up ────────────────────────────────────────────────
+function AnimatedCounter({ to, suffix = '', prefix = '', duration = 2 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: '-40px' });
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!inView || startedRef.current) return;
+    startedRef.current = true;
+    const t0 = performance.now();
+    const tick = (now) => {
+      const elapsed = (now - t0) / 1000;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      if (ref.current) ref.current.textContent = prefix + Math.round(eased * to) + suffix;
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [inView, to, prefix, suffix, duration]);
+
+  return <span ref={ref}>{prefix}0{suffix}</span>;
+}
+
+// ─── Magnetic button wrapper ──────────────────────────────────────────────────
+function MagneticButton({ children, strength = 0.32 }) {
+  const ref = useRef(null);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const sx = useSpring(x, { stiffness: 180, damping: 18 });
+  const sy = useSpring(y, { stiffness: 180, damping: 18 });
+
+  const onMove = (e) => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    x.set((e.clientX - (r.left + r.width / 2)) * strength);
+    y.set((e.clientY - (r.top + r.height / 2)) * strength);
+  };
+  const onLeave = () => { x.set(0); y.set(0); };
+
+  return (
+    <motion.div ref={ref} style={{ x: sx, y: sy }} onMouseMove={onMove} onMouseLeave={onLeave}>
+      {children}
+    </motion.div>
+  );
+}
+
 // ─── Marquee ticker ───────────────────────────────────────────────────────────
 const TICKER_ITEMS = [
   'GEMINI LIVE', 'REAL-TIME VOICE', 'AI SCREENING', 'ZERO BIAS',
@@ -80,7 +201,7 @@ function Ticker() {
   );
 }
 
-// ─── 3-D tilt team card ───────────────────────────────────────────────────────
+// ─── 3-D tilt team card with specular shine ──────────────────────────────────
 function TeamCard({ videoUrl, index, name, role, delay = 0 }) {
   const cardRef = useRef(null);
   const x = useMotionValue(0);
@@ -88,16 +209,24 @@ function TeamCard({ videoUrl, index, name, role, delay = 0 }) {
   const rotateX = useSpring(useTransform(y, [-0.5, 0.5], [12, -12]), { stiffness: 200, damping: 25 });
   const rotateY = useSpring(useTransform(x, [-0.5, 0.5], [-12, 12]), { stiffness: 200, damping: 25 });
   const glowOpacity = useMotionValue(0);
+  const shineX = useMotionValue(50);
+  const shineY = useMotionValue(50);
+  const shineBg = useMotionTemplate`radial-gradient(180px circle at ${shineX}% ${shineY}%, rgba(255,255,255,0.1) 0%, transparent 65%)`;
 
   const handleMouse = (e) => {
     if (!cardRef.current) return;
     const r = cardRef.current.getBoundingClientRect();
-    x.set((e.clientX - r.left) / r.width - 0.5);
-    y.set((e.clientY - r.top) / r.height - 0.5);
+    const nx = (e.clientX - r.left) / r.width;
+    const ny = (e.clientY - r.top) / r.height;
+    x.set(nx - 0.5);
+    y.set(ny - 0.5);
     glowOpacity.set(1);
+    shineX.set(nx * 100);
+    shineY.set(ny * 100);
   };
   const handleLeave = () => {
     x.set(0); y.set(0); glowOpacity.set(0);
+    shineX.set(50); shineY.set(50);
   };
 
   return (
@@ -120,8 +249,13 @@ function TeamCard({ videoUrl, index, name, role, delay = 0 }) {
         transition={{ duration: 0.2 }}
       />
 
+      {/* specular shine follows cursor */}
+      <motion.div
+        className="absolute inset-0 rounded-[40px] pointer-events-none z-[5]"
+        style={{ background: shineBg, opacity: glowOpacity }}
+      />
+
       <div className="relative w-full aspect-square rounded-[32px] overflow-hidden bg-black/50">
-        {/* inner glow on hover */}
         <div className="absolute inset-0 rounded-[32px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-10 pointer-events-none"
           style={{ boxShadow: 'inset 0 0 50px rgba(111,255,0,0.12)' }} />
 
@@ -130,12 +264,10 @@ function TeamCard({ videoUrl, index, name, role, delay = 0 }) {
           autoPlay loop muted playsInline src={videoUrl}
         />
 
-        {/* index badge */}
         <div className="absolute top-5 left-5 font-mono text-[11px] text-cream/30 uppercase tracking-[0.28em] z-20">
           {index}
         </div>
 
-        {/* name + role overlay */}
         <div className="absolute bottom-5 left-5 right-5 liquid-glass rounded-[24px] px-6 py-5 border border-white/10 backdrop-blur-md z-20">
           <motion.div
             className="h-[2px] bg-neon mb-3 origin-left"
@@ -156,9 +288,23 @@ export default function LandingPage() {
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.4], [0, -80]);
 
+  // Section spotlight — mouse-position radial glow on team section
+  const spotlightRef = useRef(null);
+  const spotX = useMotionValue(50);
+  const spotY = useMotionValue(50);
+  const spotBg = useMotionTemplate`radial-gradient(900px circle at ${spotX}% ${spotY}%, rgba(111,255,0,0.05) 0%, transparent 60%)`;
+
+  const handleTeamMove = (e) => {
+    if (!spotlightRef.current) return;
+    const r = spotlightRef.current.getBoundingClientRect();
+    spotX.set(((e.clientX - r.left) / r.width) * 100);
+    spotY.set(((e.clientY - r.top) / r.height) * 100);
+  };
+
   return (
     <div className="relative min-h-screen bg-background text-cream overflow-x-hidden font-sans selection:bg-neon selection:text-background">
       <ScrollProgress />
+      <AnimatedGrain />
 
       {/* Texture overlay */}
       <div className="fixed inset-0 z-50 pointer-events-none mix-blend-lighten opacity-60"
@@ -170,7 +316,6 @@ export default function LandingPage() {
           src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_045634_e1c98c76-1265-4f5c-882a-4276f2080894.mp4" />
         <div className="absolute inset-0 bg-background/40 z-[1]" />
 
-        {/* ambient orbs */}
         <div className="absolute inset-0 z-[2] overflow-hidden pointer-events-none">
           <Orb size={700} color="#6FFF00" x={-350} y={80}  delay={0}  opacity={0.06} />
           <Orb size={450} color="#3b5bff" x={350}  y={-80} delay={3}  opacity={0.07} />
@@ -236,12 +381,14 @@ export default function LandingPage() {
                 initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
               >
-                <Link to="/app" className="group flex items-center gap-4 bg-neon px-8 py-4 rounded-full hover:scale-105 transition-all duration-300 shadow-[0_0_40px_rgba(111,255,0,0.35)] hover:shadow-[0_0_60px_rgba(111,255,0,0.55)]">
-                  <span className="font-grotesk text-background text-lg uppercase tracking-wider">Start Interview</span>
-                  <div className="w-8 h-8 rounded-full bg-background flex items-center justify-center group-hover:translate-x-1 transition-transform">
-                    <ArrowRight size={18} className="text-neon" />
-                  </div>
-                </Link>
+                <MagneticButton>
+                  <Link to="/app" className="group flex items-center gap-4 bg-neon px-8 py-4 rounded-full hover:scale-105 transition-all duration-300 neon-glow">
+                    <span className="font-grotesk text-background text-lg uppercase tracking-wider">Start Interview</span>
+                    <div className="w-8 h-8 rounded-full bg-background flex items-center justify-center group-hover:translate-x-1 transition-transform">
+                      <ArrowRight size={18} className="text-neon" />
+                    </div>
+                  </Link>
+                </MagneticButton>
                 <div className="hidden sm:block font-mono text-[11px] uppercase tracking-[0.2em] text-cream/50 max-w-[200px] leading-relaxed">
                   Fully autonomous voice screening in real-time
                 </div>
@@ -264,6 +411,33 @@ export default function LandingPage() {
 
       {/* ── TICKER ───────────────────────────────────────────────── */}
       <Ticker />
+
+      {/* ── STATS ────────────────────────────────────────────────── */}
+      <section className="relative py-24 border-b border-white/[0.04] overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <Orb size={700} color="#6FFF00" x={0} y={0} delay={1} opacity={0.025} />
+        </div>
+        <div className="relative max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-12 lg:gap-8">
+            {[
+              { to: 1000, suffix: '+', prefix: '',  label: 'Calls Analyzed' },
+              { to: 94,   suffix: '%', prefix: '',  label: 'Screening Accuracy' },
+              { to: 5,    suffix: '',  prefix: '',  label: 'AI Voice Personas' },
+              { to: 2,    suffix: 's', prefix: '<', label: 'Avg Response Time' },
+            ].map((stat, i) => (
+              <Reveal key={i} delay={i * 0.1}>
+                <div className="flex flex-col gap-3">
+                  <div className="font-grotesk text-[56px] sm:text-[72px] lg:text-[88px] leading-none tracking-tighter">
+                    <AnimatedCounter to={stat.to} suffix={stat.suffix} prefix={stat.prefix} duration={2.2} />
+                  </div>
+                  <div className="w-10 h-[1.5px] bg-neon" />
+                  <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-cream/40 leading-relaxed">{stat.label}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ── ABOUT ────────────────────────────────────────────────── */}
       <section className="relative w-full min-h-screen overflow-hidden flex flex-col justify-center py-24">
@@ -308,30 +482,35 @@ export default function LandingPage() {
       </section>
 
       {/* ── TEAM ─────────────────────────────────────────────────── */}
-      <section className="relative w-full bg-background py-32 overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none">
+      <section
+        ref={spotlightRef}
+        onMouseMove={handleTeamMove}
+        className="relative w-full bg-background py-32 overflow-hidden"
+      >
+        {/* Mouse-position section spotlight */}
+        <motion.div className="absolute inset-0 pointer-events-none z-[1]" style={{ background: spotBg }} />
+
+        <div className="absolute inset-0 pointer-events-none z-0">
           <Orb size={800} color="#6FFF00" x={-450} y={50}   delay={0} opacity={0.035} />
           <Orb size={600} color="#3b5bff" x={450}  y={250}  delay={5} opacity={0.045} />
           <Orb size={350} color="#6FFF00" x={100}  y={-150} delay={2} opacity={0.03}  />
         </div>
 
-        <div className="relative w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
+        <div className="relative z-10 w-full max-w-[1831px] mx-auto px-6 sm:px-12 md:px-16">
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-12 mb-24">
-            <Reveal>
-              <div>
-                <motion.p className="font-mono text-[11px] uppercase tracking-[0.35em] text-neon mb-6"
-                  initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }} transition={{ duration: 0.6 }}>
-                  The Builders
-                </motion.p>
-                <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
-                  Minds Behind <br />
-                  <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
-                    <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Clarix</span> AI
-                  </div>
-                </h2>
-              </div>
-            </Reveal>
+            <div>
+              <motion.p className="font-mono text-[11px] uppercase tracking-[0.35em] text-neon mb-6"
+                initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }} transition={{ duration: 0.6 }}>
+                The Builders
+              </motion.p>
+              <h2 className="font-grotesk uppercase text-[36px] sm:text-[54px] lg:text-[72px] leading-[0.9]">
+                <ScrambleText text="MINDS BEHIND" className="block" />
+                <div className="ml-8 sm:ml-16 lg:ml-32 flex items-baseline gap-4">
+                  <span className="font-condiment text-neon normal-case text-[48px] sm:text-[72px] lg:text-[96px]">Clarix</span> AI
+                </div>
+              </h2>
+            </div>
 
             <Reveal delay={0.2}>
               <Link to="/app" className="group flex flex-col items-center">
@@ -348,13 +527,17 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            <TeamCard videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
               index="01" name="Rishabh Tiwari" role="Chief Visionary · Origin of the Spark" delay={0} />
-            <TeamCard videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_054411_511c1b7a-fb2f-42ef-bf6c-32c0b1a06e79.mp4"
               index="02" name="Prerna Shekhawat" role="Neural Conductor · Cognitive Systems" delay={0.1} />
-            <TeamCard videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055427_ac7035b5-9f3b-4289-86fc-941b2432317d.mp4"
               index="03" name="Sanyam Kumar" role="Deep Intelligence Architect · AI Research" delay={0.2} />
-            <TeamCard videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4"
+            <TeamCard
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4"
               index="04" name="Ajay Singh Rathore" role="Systems Convergence Commander · Full-Stack" delay={0.3} />
           </div>
         </div>
