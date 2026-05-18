@@ -175,11 +175,10 @@ export default function LandingPage() {
               role="Deep Intelligence Architect · AI Research"
             />
             <TeamCard
-              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_053923_22c0a6a5-313c-474c-85ff-3b50d25e944a.mp4"
+              videoUrl="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260331_055729_72d66327-b59e-4ae9-bb70-de6ccb5ecdb0.mp4"
               index="04"
               name="Ajay Singh Rathore"
               role="Systems Convergence Commander · Full-Stack"
-              flip
             />
           </div>
         </div>
