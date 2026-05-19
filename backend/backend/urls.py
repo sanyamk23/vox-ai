@@ -13,6 +13,7 @@ from chat.views import (
     upload_resume,
 )
 from chat.campaign_views import (
+    campaign_list_or_create,
     create_campaign,
     get_campaign,
     list_campaigns,
@@ -48,7 +49,7 @@ urlpatterns = [
     path("api/call-status/", call_status_webhook),
 
     # Campaign (bulk calling) flow
-    path("api/campaigns/", list_campaigns),
+    path("api/campaigns/", campaign_list_or_create),
     path("api/campaigns/create/", create_campaign),
     path("api/campaigns/<int:campaign_id>/", get_campaign),
     path("api/campaigns/<int:campaign_id>/start/", start_campaign),
