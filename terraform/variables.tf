@@ -54,3 +54,9 @@ variable "duckdns_token" {
   default     = ""
   sensitive   = true
 }
+
+variable "admin_email" {
+  description = "Email address for ZeroSSL/ACME account registration (used by Caddy for TLS cert acquisition)"
+  type        = string
+  default     = ""
+}

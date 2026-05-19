@@ -105,6 +105,7 @@ resource "aws_instance" "app" {
     repo_url            = var.repo_url
     domain              = var.domain
     duckdns_token       = var.duckdns_token
+    admin_email         = var.admin_email
     twilio_account_sid  = var.twilio_account_sid
     twilio_auth_token   = var.twilio_auth_token
     twilio_phone_number = var.twilio_phone_number

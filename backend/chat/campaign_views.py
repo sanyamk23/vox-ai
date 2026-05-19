@@ -281,11 +281,11 @@ def get_campaign(request, campaign_id):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_campaign(request, campaign_id):
+async def start_campaign(request, campaign_id):
     """POST /api/campaigns/<id>/start/"""
     from .models import Campaign
     try:
-        campaign = Campaign.objects.get(id=campaign_id)
+        campaign = await sync_to_async(Campaign.objects.get)(id=campaign_id)
     except Campaign.DoesNotExist:
         return JsonResponse({"error": "Campaign not found"}, status=404)
 
@@ -296,15 +296,14 @@ def start_campaign(request, campaign_id):
 
     campaign.status     = Campaign.RUNNING
     campaign.started_at = campaign.started_at or timezone.now()
-    campaign.save(update_fields=["status", "started_at"])
+    await sync_to_async(campaign.save)(update_fields=["status", "started_at"])
 
     # Launch background caller (idempotent — cancel old task first)
     old = _CAMPAIGN_TASKS.get(campaign_id)
     if old and not old.done():
         old.cancel()
 
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(_run_campaign_caller(campaign_id))
+    task = asyncio.create_task(_run_campaign_caller(campaign_id))
     _CAMPAIGN_TASKS[campaign_id] = task
 
     return JsonResponse({"status": "started", "campaign_id": campaign_id})

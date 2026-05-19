@@ -10,7 +10,8 @@ repo_url = "https://github.com/your-org/your-repo.git"
 
 # Domain you own, e.g. "app.yourdomain.com"
 # After apply, point its A record to the output public_ip
-domain = "app.yourdomain.com"
+domain      = "app.yourdomain.com"
+admin_email = "you@example.com"  # Used for ZeroSSL ACME cert registration
 
 # Twilio — from console.twilio.com
 twilio_account_sid  = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
