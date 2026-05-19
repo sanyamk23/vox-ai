@@ -575,6 +575,22 @@ def call_status_webhook(request):
 
     logger.info("[CallStatus] sid=%s status=%s", call_sid, call_status)
 
+    # Update campaign candidate status for any terminal call state
+    TERMINAL_STATUSES = {"completed", "no-answer", "busy", "failed", "canceled"}
+    if call_status in TERMINAL_STATUSES and call_sid:
+        campaign_call = cache.get(f"vox:campaign_call:{call_sid}")
+        if campaign_call:
+            candidate_id = campaign_call.get("candidate_id")
+            if candidate_id:
+                try:
+                    from .models import CampaignCandidate
+                    failed_statuses = {"no-answer", "busy", "failed", "canceled"}
+                    new_status = CampaignCandidate.FAILED if call_status in failed_statuses else CampaignCandidate.COMPLETED
+                    CampaignCandidate.objects.filter(id=candidate_id).update(status=new_status)
+                    logger.info("[CallStatus] Campaign candidate %d → %s", candidate_id, new_status)
+                except Exception as _ce:
+                    logger.warning("[CallStatus] Failed to update campaign candidate: %s", _ce)
+
     # Only act on missed / unreachable calls — ignore completed / in-progress
     if call_status not in ("no-answer", "busy", "failed"):
         return HttpResponse(status=204)

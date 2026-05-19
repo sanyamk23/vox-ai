@@ -749,6 +749,22 @@ def build_enriched_system_prompt(
 # Post-call evaluation — uses EvaluationAgent (retries + structured fallback)
 # ---------------------------------------------------------------------------
 
+async def _sync_campaign_candidate(call_sid: str) -> None:
+    """Sync CallSession results → CampaignCandidate if this call belongs to a campaign."""
+    if not call_sid:
+        return
+    try:
+        from django.core.cache import cache
+        from .campaign_views import _sync_call_result
+        campaign_call = cache.get(f"vox:campaign_call:{call_sid}")
+        if campaign_call:
+            candidate_id = campaign_call.get("candidate_id")
+            if candidate_id:
+                await _sync_call_result(candidate_id, call_sid)
+    except Exception as exc:
+        logger.warning("[Finalize] Campaign candidate sync failed for %s: %s", call_sid, exc)
+
+
 async def finalize_gemini_session(
     consumer,
     transcript: list[str],
@@ -788,6 +804,7 @@ async def finalize_gemini_session(
         # Candidate didn't answer or call was too short to produce transcript.
         # Mark the pre-created session as ended so the frontend poll resolves.
         await _mark_ended(outcome="BUSY")
+        await _sync_campaign_candidate(call_sid)
         return
 
     # Convert raw "AI: ..." / "USER: ..." lines → chat-dict format the evaluator expects
@@ -896,3 +913,5 @@ async def finalize_gemini_session(
             "hr_flags": ["Auto-evaluation error — check backend logs"],
             "evaluator_status": "error",
         }))
+
+    await _sync_campaign_candidate(call_sid)

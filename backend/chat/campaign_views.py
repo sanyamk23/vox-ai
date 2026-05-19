@@ -464,9 +464,6 @@ async def _run_campaign_caller(campaign_id: int) -> None:
                 )
                 logger.info("[Campaign-%d] Calling %s → SID %s", campaign_id, candidate.name, call_sid)
 
-                # Wait up to 8 minutes for the call to finish
-                await _wait_for_call_end(call_sid, timeout=480)
-
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -474,11 +471,7 @@ async def _run_campaign_caller(campaign_id: int) -> None:
                 candidate.status = CampaignCandidate.FAILED
                 await sync_to_async(candidate.save)(update_fields=["status"])
 
-            # Copy results from CallSession → CampaignCandidate
-            if call_sid:
-                await _sync_call_result(candidate.id, call_sid)
-
-            # Delay before next call
+            # Delay before next call — results are synced asynchronously via webhook
             delay = campaign.delay_seconds
             logger.info("[Campaign-%d] Waiting %ds before next call", campaign_id, delay)
             await asyncio.sleep(delay)
