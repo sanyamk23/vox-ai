@@ -88,6 +88,14 @@ def _validate_candidates(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 @csrf_exempt
+def campaign_list_or_create(request):
+    """GET /api/campaigns/ → list; POST /api/campaigns/ → create (alias for /create/)."""
+    if request.method == 'POST':
+        return create_campaign(request)
+    return list_campaigns(request)
+
+
+@csrf_exempt
 @require_http_methods(["GET"])
 def list_campaigns(request):
     """GET /api/campaigns/"""

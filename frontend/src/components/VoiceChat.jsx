@@ -139,6 +139,7 @@ export default function VoiceChat() {
   const wsRef        = useRef(null);
   const callSidRef   = useRef(null);
   const [bars, setBars] = useState(Array(20).fill(0));
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const setSF = (key, val) => setStructuredFields(prev => ({ ...prev, [key]: val }));
   const selectedVoice = voices.find(v => v.id === selectedVoiceId);
@@ -652,6 +653,10 @@ export default function VoiceChat() {
                   {isBusy && connectingType === 'phone' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
                   {isBusy && connectingType === 'phone' ? 'INITIATING...' : 'CALL PHONE'}
                 </button>
+                <button onClick={() => setBulkOpen(true)} disabled={isBusy}
+                  className="w-full py-3 rounded-[16px] font-grotesk text-[16px] uppercase flex items-center justify-center gap-2 bg-white/5 text-cream/60 border border-white/10 hover:bg-white/10 hover:text-cream disabled:opacity-40 transition-colors">
+                  <Users size={15} /> Bulk Upload
+                </button>
               </div>
             )}
             {(isLive || isDone) && (
@@ -777,6 +782,18 @@ export default function VoiceChat() {
           )}
         </aside>
       </main>
+
+      {/* ── Bulk Upload Modal ── */}
+      <AnimatePresence>
+        {bulkOpen && (
+          <BulkModal
+            onClose={() => setBulkOpen(false)}
+            voices={voices}
+            defaultVoiceId={selectedVoiceId}
+            defaultJd={jd}
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── Toast Notification ── */}
       {toast && (
@@ -961,6 +978,339 @@ function MetricTile({ label, value, wide }) {
     <div className={`p-3 rounded-[16px] bg-white/5 border border-white/10 ${wide ? 'col-span-2' : ''}`}>
       <p className="font-mono text-[9px] text-cream/50 mb-1 uppercase">{label}</p>
       <p className="font-mono text-[12px] text-cream truncate">{value}</p>
+    </div>
+  );
+}
+
+// ── Bulk Upload Modal ──────────────────────────────────────────────────────────
+function BulkModal({ onClose, voices, defaultVoiceId, defaultJd }) {
+  const [step,         setStep]         = useState('upload');
+  const [dragOver,     setDragOver]     = useState(false);
+  const [file,         setFile]         = useState(null);
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState('');
+  const [campaignName, setCampaignName] = useState(
+    `Campaign ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`
+  );
+  const [voiceId,      setVoiceId]      = useState(defaultVoiceId || 'priya');
+  const [delay,        setDelay]        = useState(30);
+  const [retries,      setRetries]      = useState(1);
+  const [validation,   setValidation]   = useState(null);
+  const [campaignId,   setCampaignId]   = useState(null);
+  const [campaign,     setCampaign]     = useState(null);
+  const fileRef  = useRef(null);
+  const pollRef  = useRef(null);
+
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  useEffect(() => {
+    if (step !== 'running' || !campaignId || campaign?.status === 'completed') return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/campaigns/${campaignId}/`);
+        if (r.ok) setCampaign(await r.json());
+      } catch {}
+    }, 4000);
+    return () => clearInterval(pollRef.current);
+  }, [step, campaignId, campaign?.status]);
+
+  const handleFile = (f) => {
+    if (!f) return;
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls'].includes(ext)) { setError('Only .xlsx or .xls files are supported'); return; }
+    setFile(f);
+    setError('');
+  };
+
+  const uploadAndValidate = async () => {
+    if (!file) { setError('Please select an Excel file'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('campaign_name', campaignName);
+      form.append('job_description', defaultJd || '');
+      form.append('voice_id', voiceId);
+      form.append('delay_seconds', String(delay));
+      form.append('max_retries', String(retries));
+      const r = await fetch(`${API_BASE}/api/campaigns/create/`, { method: 'POST', body: form });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || 'Upload failed'); return; }
+      setCampaignId(d.campaign_id);
+      setValidation(d.validation);
+      setStep('validated');
+    } catch { setError('Network error — check connection'); }
+    finally   { setLoading(false); }
+  };
+
+  const startCampaign = async () => {
+    if (!campaignId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r = await fetch(`${API_BASE}/api/campaigns/${campaignId}/start/`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || 'Failed to start'); return; }
+      const r2 = await fetch(`${API_BASE}/api/campaigns/${campaignId}/`);
+      setCampaign(r2.ok ? await r2.json() : { id: campaignId, status: 'running', stats: {} });
+      setStep('running');
+    } catch { setError('Network error'); }
+    finally   { setLoading(false); }
+  };
+
+  const pauseResume = async () => {
+    if (!campaignId) return;
+    const isPaused = campaign?.status === 'paused';
+    try {
+      const r = await fetch(`${API_BASE}/api/campaigns/${campaignId}/${isPaused ? 'start' : 'pause'}/`, { method: 'POST' });
+      if (r.ok) {
+        const r2 = await fetch(`${API_BASE}/api/campaigns/${campaignId}/`);
+        if (r2.ok) setCampaign(await r2.json());
+      }
+    } catch {}
+  };
+
+  const v   = validation || {};
+  const s   = campaign?.stats || {};
+  const pct = s.completion_pct || 0;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        transition={{ duration: 0.18 }}
+        className="relative w-full max-w-lg liquid-glass rounded-[32px] overflow-hidden flex flex-col max-h-[92vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between">
+          <div>
+            <h2 className="font-grotesk uppercase text-[22px] leading-none">Bulk Campaign</h2>
+            <p className="font-mono text-[10px] text-cream/50 uppercase mt-0.5">
+              {step === 'upload' ? 'Upload candidate list' : step === 'validated' ? 'Review & launch' : 'Live progress'}
+            </p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full text-cream/40 hover:text-cream hover:bg-white/10 transition-colors font-mono text-[16px]">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-5 scrollbar-hide">
+
+          {/* ── Step: upload ── */}
+          {step === 'upload' && (
+            <>
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Campaign Name</label>
+                <input type="text"
+                  className="w-full rounded-[16px] bg-white/5 border border-white/10 px-4 py-3 text-[13px] font-mono text-cream placeholder-cream/30 focus:outline-none focus:ring-1 focus:ring-neon transition-all"
+                  value={campaignName} onChange={e => setCampaignName(e.target.value)} />
+              </div>
+
+              {voices.length > 0 && (
+                <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-neon uppercase tracking-wider flex items-center gap-1.5"><Mic size={10} /> AI Voice</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {voices.map(v => {
+                      const active = voiceId === v.id;
+                      return (
+                        <button key={v.id} onClick={() => setVoiceId(v.id)}
+                          className={`p-2.5 rounded-[12px] text-left border transition-all ${active ? 'bg-neon/15 border-neon/50' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}>
+                          <span className={`font-mono text-[11px] uppercase font-semibold block ${active ? 'text-neon' : 'text-cream/60'}`}>{v.display_name}</span>
+                          <span className="font-mono text-[9px] text-cream opacity-60 leading-tight">{v.accent}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Delay: {delay}s</label>
+                  <input type="range" min={10} max={120} step={5} value={delay} onChange={e => setDelay(+e.target.value)} className="w-full accent-[#6FFF00] cursor-pointer" />
+                  <div className="flex justify-between font-mono text-[9px] text-cream/30"><span>10s</span><span>120s</span></div>
+                </div>
+                <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-neon uppercase tracking-wider">Max Retries</label>
+                  <div className="flex gap-2 mt-1">
+                    {[0, 1, 2].map(n => (
+                      <button key={n} onClick={() => setRetries(n)}
+                        className={`flex-1 py-2.5 rounded-[12px] font-mono text-[13px] border transition-all ${retries === n ? 'bg-neon/20 border-neon text-neon' : 'bg-white/5 border-white/10 text-cream/50 hover:bg-white/10'}`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="rounded-[16px] border-2 border-dashed transition-all cursor-pointer"
+                style={{ borderColor: dragOver ? '#6FFF00' : file ? '#6FFF00' : 'rgba(255,255,255,0.15)', background: dragOver ? 'rgba(111,255,0,0.06)' : file ? 'rgba(111,255,0,0.03)' : 'transparent' }}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+                onClick={() => fileRef.current?.click()}
+              >
+                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+                {file ? (
+                  <div className="py-5 px-5 flex items-center gap-3">
+                    <CheckCircle size={16} className="text-neon flex-shrink-0" />
+                    <span className="font-mono text-[12px] text-neon flex-1 truncate">{file.name}</span>
+                    <button className="font-mono text-[10px] text-cream/40 hover:text-red-400 uppercase transition-colors"
+                      onClick={e => { e.stopPropagation(); setFile(null); setError(''); }}>Remove</button>
+                  </div>
+                ) : (
+                  <div className="py-9 flex flex-col items-center gap-2">
+                    <Upload size={22} className="text-cream/30" />
+                    <p className="font-mono text-[11px] text-cream/50 uppercase">Drop Excel file here or click to browse</p>
+                    <p className="font-mono text-[9px] text-cream/30">.xlsx or .xls · Needs "Name" and "Phone" columns</p>
+                  </div>
+                )}
+              </div>
+
+              {error && <p className="font-mono text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-[12px] px-4 py-3">{error}</p>}
+            </>
+          )}
+
+          {/* ── Step: validated ── */}
+          {step === 'validated' && validation && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Total Uploaded', value: v.total_uploaded, color: 'text-cream' },
+                  { label: 'Valid',          value: v.valid,           color: 'text-neon' },
+                  { label: 'Invalid',        value: v.invalid,         color: 'text-red-400' },
+                  { label: 'Duplicates',     value: v.duplicates,      color: 'text-amber-400' },
+                ].map(stat => (
+                  <div key={stat.label} className="bg-white/5 border border-white/10 rounded-[16px] p-4 text-center">
+                    <p className={`font-grotesk text-[32px] leading-none ${stat.color}`}>{stat.value ?? 0}</p>
+                    <p className="font-mono text-[10px] text-cream/40 uppercase mt-1">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {([...(v.invalid_details || []), ...(v.duplicate_details || []).map(d => ({ ...d, error: 'Duplicate' }))]).length > 0 && (
+                <div className="space-y-2">
+                  <p className="font-mono text-[10px] text-cream/50 uppercase tracking-wider">Skipped entries (won't be called)</p>
+                  <div className="space-y-1 max-h-36 overflow-y-auto scrollbar-hide">
+                    {[...(v.invalid_details || []), ...(v.duplicate_details || []).map(d => ({ ...d, error: 'Duplicate' }))].map((c, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-white/3 border border-white/8 rounded-[10px] px-3 py-2">
+                        <span className="font-mono text-[11px] text-cream/60 flex-1 truncate">{c.name || '—'} · {c.phone || '—'}</span>
+                        <span className="font-mono text-[9px] text-red-400 flex-shrink-0">{c.error}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {v.valid === 0 && (
+                <p className="font-mono text-[12px] text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-[12px] px-4 py-3">
+                  No valid candidates to call. Check your Excel format.
+                </p>
+              )}
+              {error && <p className="font-mono text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-[12px] px-4 py-3">{error}</p>}
+            </>
+          )}
+
+          {/* ── Step: running ── */}
+          {step === 'running' && campaign && (
+            <>
+              <div className="flex items-center gap-3">
+                <span className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-[10px] uppercase border ${
+                  campaign.status === 'running'   ? 'bg-neon/10 border-neon/30 text-neon' :
+                  campaign.status === 'paused'    ? 'bg-amber-400/10 border-amber-400/30 text-amber-400' :
+                  campaign.status === 'completed' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                                                    'bg-white/5 border-white/10 text-cream/50'
+                }`}>
+                  {campaign.status === 'running' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-neon animate-pulse" />}
+                  {(campaign.status || 'draft').toUpperCase()}
+                </span>
+                <span className="font-mono text-[11px] text-cream/50 truncate">{campaign.name || campaignName}</span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between font-mono text-[10px] text-cream/40 uppercase">
+                  <span>Progress</span><span>{pct}%</span>
+                </div>
+                <div className="h-2.5 bg-white/10 rounded-full overflow-hidden">
+                  <div className="h-full bg-neon rounded-full transition-all duration-1000"
+                    style={{ width: `${pct}%`, boxShadow: pct > 0 ? '0 0 8px rgba(111,255,0,0.45)' : 'none' }} />
+                </div>
+                <div className="flex justify-between font-mono text-[9px] text-cream/30">
+                  <span>{s.completed || 0} completed</span><span>{s.total || 0} total</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Pending',    value: s.pending        || 0, cls: 'text-cream/60' },
+                  { label: 'Calling',    value: s.calling        || 0, cls: 'text-amber-400' },
+                  { label: 'Done',       value: s.completed      || 0, cls: 'text-neon' },
+                  { label: 'Failed',     value: s.failed         || 0, cls: 'text-red-400' },
+                  { label: 'Interested', value: s.interested     || 0, cls: 'text-emerald-400' },
+                  { label: 'Declined',   value: s.not_interested || 0, cls: 'text-red-300' },
+                ].map(stat => (
+                  <div key={stat.label} className="bg-white/5 border border-white/10 rounded-[14px] p-3 text-center">
+                    <p className={`font-grotesk text-[24px] leading-none ${stat.cls}`}>{stat.value}</p>
+                    <p className="font-mono text-[9px] text-cream/40 uppercase mt-0.5">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-white/10 bg-black/20">
+          {step === 'upload' && (
+            <button onClick={uploadAndValidate} disabled={loading || !file}
+              className="w-full py-3.5 rounded-[16px] font-grotesk text-[20px] uppercase flex items-center justify-center gap-2 bg-neon text-background hover:bg-[#8aff2a] disabled:opacity-40 disabled:bg-white/10 disabled:text-cream/50 transition-colors shadow-[0_0_20px_rgba(111,255,0,0.15)]">
+              {loading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+              {loading ? 'Uploading...' : 'Upload & Validate'}
+            </button>
+          )}
+
+          {step === 'validated' && (
+            <div className="flex gap-2">
+              <button onClick={() => { setStep('upload'); setValidation(null); setError(''); }}
+                className="flex-1 py-3.5 rounded-[16px] font-grotesk text-[18px] uppercase border border-white/20 text-cream/60 hover:bg-white/5 transition-colors">
+                Back
+              </button>
+              <button onClick={startCampaign} disabled={loading || !v.valid}
+                className="flex-[2] py-3.5 rounded-[16px] font-grotesk text-[18px] uppercase flex items-center justify-center gap-2 bg-neon text-background hover:bg-[#8aff2a] disabled:opacity-40 transition-colors">
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                {loading ? 'Starting...' : `Start ${v.valid} Calls`}
+              </button>
+            </div>
+          )}
+
+          {step === 'running' && (
+            <div className="flex gap-2">
+              {campaign?.status !== 'completed' && (
+                <button onClick={pauseResume}
+                  className={`flex-1 py-3 rounded-[16px] font-grotesk text-[16px] uppercase border transition-colors ${
+                    campaign?.status === 'paused'
+                      ? 'border-neon/50 text-neon hover:bg-neon/10'
+                      : 'border-amber-400/50 text-amber-400 hover:bg-amber-400/10'
+                  }`}>
+                  {campaign?.status === 'paused' ? 'Resume' : 'Pause'}
+                </button>
+              )}
+              <a href={`${API_BASE}/api/campaigns/${campaignId}/export/`} target="_blank" rel="noreferrer"
+                className="flex-1 py-3 rounded-[16px] font-grotesk text-[16px] uppercase border border-white/20 text-cream/60 hover:bg-white/5 transition-colors flex items-center justify-center">
+                Export
+              </a>
+              <button onClick={onClose}
+                className="flex-1 py-3 rounded-[16px] font-grotesk text-[16px] uppercase border border-white/20 text-cream/60 hover:bg-white/5 transition-colors">
+                Close
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }
