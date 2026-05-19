@@ -123,7 +123,7 @@ def create_campaign(request):
     """
     POST /api/campaigns/
     Multipart form: file (xlsx), campaign_name, job_description,
-                    voice_id, delay_seconds, max_retries
+                    voice_id, delay_seconds
     """
     try:
         import openpyxl
@@ -140,7 +140,6 @@ def create_campaign(request):
     jd            = (request.POST.get("job_description") or "").strip()
     voice_id      = (request.POST.get("voice_id") or "priya").strip()
     delay_seconds = _safe_int(request.POST.get("delay_seconds"), 30)
-    max_retries   = _safe_int(request.POST.get("max_retries"), 1)
 
     # Parse workbook
     try:
@@ -185,7 +184,6 @@ def create_campaign(request):
         job_description=jd,
         voice_id=voice_id,
         delay_seconds=delay_seconds,
-        max_retries=max_retries,
         total_uploaded=total,
         valid_count=len(result["valid"]),
         invalid_count=len(result["invalid"]),
