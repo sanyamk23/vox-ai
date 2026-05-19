@@ -591,6 +591,19 @@ def call_status_webhook(request):
                 except Exception as _ce:
                     logger.warning("[CallStatus] Failed to update campaign candidate: %s", _ce)
 
+    # For completed calls, stamp ended_at as a fallback in case finalize_gemini_session
+    # didn't fire (e.g. WebSocket dropped). Idempotent — only writes if still NULL.
+    if call_status == "completed" and call_sid:
+        try:
+            from .models import CallSession
+            from django.utils import timezone
+            CallSession.objects.filter(call_sid=call_sid, ended_at__isnull=True).update(
+                ended_at=timezone.now(),
+                call_outcome="COMPLETED",
+            )
+        except Exception as _ce:
+            logger.warning("[CallStatus] Failed to stamp ended_at for completed call: %s", _ce)
+
     # Only act on missed / unreachable calls — ignore completed / in-progress
     if call_status not in ("no-answer", "busy", "failed"):
         return HttpResponse(status=204)
