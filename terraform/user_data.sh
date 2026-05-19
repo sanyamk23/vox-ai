@@ -104,7 +104,13 @@ sed -i "s/__IP__/$IP_PLAIN/g"   /app/.env
 
 echo "==> Writing Caddyfile"
 cat > /app/Caddyfile <<'CADDYEOF'
-# HTTPS via sslip.io — TLS cert obtained automatically, serves Twilio WSS
+# ZeroSSL as ACME CA — avoids DuckDNS CAA lookup timeouts that break Let's Encrypt secondary validation
+{
+    email ${admin_email}
+    acme_ca https://acme.zerossl.com/v2/DV90
+}
+
+# HTTPS via ZeroSSL ACME — TLS cert obtained automatically, serves Twilio WSS
 __DOMAIN__ {
     handle /ws/* {
         reverse_proxy backend:8000
