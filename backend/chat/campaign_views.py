@@ -12,6 +12,13 @@ import re
 
 from asgiref.sync import sync_to_async
 from django.core.cache import cache
+
+# sync_to_async wrapper safe for background asyncio tasks that outlive the HTTP
+# request that created them.  thread_sensitive=False uses the global thread pool
+# instead of the request-bound CurrentThreadExecutor (which is torn down when the
+# view returns, causing "CurrentThreadExecutor already quit or is broken" errors).
+def _bg(fn):
+    return sync_to_async(fn, thread_sensitive=False)
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -424,18 +431,18 @@ async def _run_campaign_caller(campaign_id: int) -> None:
 
         if not host_url or not from_number:
             logger.error("[Campaign-%d] PUBLIC_URL or TWILIO_PHONE_NUMBER not configured", campaign_id)
-            await sync_to_async(Campaign.objects.filter(id=campaign_id).update)(status=Campaign.PAUSED)
+            await _bg(Campaign.objects.filter(id=campaign_id).update)(status=Campaign.PAUSED)
             return
 
         cid = campaign_id  # stable local for lambdas in this scope
         while True:
-            campaign = await sync_to_async(Campaign.objects.get)(id=cid)
+            campaign = await _bg(Campaign.objects.get)(id=cid)
             if campaign.status != Campaign.RUNNING:
                 logger.info("[Campaign-%d] Status=%s — stopping", cid, campaign.status)
                 break
 
             # Next pending candidate — explicit order so we always call in upload order
-            candidate = await sync_to_async(
+            candidate = await _bg(
                 lambda: CampaignCandidate.objects.filter(
                     campaign_id=cid,
                     is_valid=True,
@@ -446,7 +453,7 @@ async def _run_campaign_caller(campaign_id: int) -> None:
 
             if candidate is None:
                 logger.info("[Campaign-%d] All candidates processed — marking completed", cid)
-                await sync_to_async(Campaign.objects.filter(id=cid).update)(
+                await _bg(Campaign.objects.filter(id=cid).update)(
                     status=Campaign.COMPLETED,
                     completed_at=timezone.now(),
                 )
@@ -457,12 +464,12 @@ async def _run_campaign_caller(campaign_id: int) -> None:
             # Mark as calling
             candidate.status    = CampaignCandidate.CALLING
             candidate.called_at = timezone.now()
-            await sync_to_async(candidate.save)(update_fields=["status", "called_at"])
+            await _bg(candidate.save)(update_fields=["status", "called_at"])
 
             call_sid = ""
             try:
                 from .views import _place_call
-                result = await sync_to_async(_place_call)(
+                result = await _bg(_place_call)(
                     to_number=candidate.phone,
                     from_number=from_number,
                     host_url=host_url,
@@ -475,10 +482,10 @@ async def _run_campaign_caller(campaign_id: int) -> None:
                     raise RuntimeError("_place_call returned no call_sid")
 
                 candidate.call_sid = call_sid
-                await sync_to_async(candidate.save)(update_fields=["call_sid"])
+                await _bg(candidate.save)(update_fields=["call_sid"])
 
                 # Store link so the status webhook can update the candidate
-                await sync_to_async(cache.set)(
+                await _bg(cache.set)(
                     f"vox:campaign_call:{call_sid}",
                     {"campaign_id": cid, "candidate_id": candidate.id},
                     timeout=3600,
@@ -495,7 +502,7 @@ async def _run_campaign_caller(campaign_id: int) -> None:
             except Exception as exc:
                 logger.error("[Campaign-%d] Call failed for %s: %s", cid, candidate.name, exc, exc_info=True)
                 candidate.status = CampaignCandidate.FAILED
-                await sync_to_async(candidate.save)(update_fields=["status"])
+                await _bg(candidate.save)(update_fields=["status"])
 
             # Brief pause between calls
             delay = campaign.delay_seconds
@@ -534,7 +541,7 @@ async def _wait_for_call_end(call_sid: str, timeout: int = 480) -> None:
     while elapsed < timeout:
         await asyncio.sleep(poll)
         elapsed += poll
-        if await sync_to_async(_check_ended)():
+        if await _bg(_check_ended)():
             logger.info("[Campaign] Call %s ended after ~%ds", sid, elapsed)
             return
     logger.warning("[Campaign] Call %s timed out after %ds — moving on", sid, timeout)
@@ -542,32 +549,31 @@ async def _wait_for_call_end(call_sid: str, timeout: int = 480) -> None:
 
 async def _sync_call_result(candidate_id: int, call_sid: str) -> None:
     from .models import CallSession, CampaignCandidate
+    sid = call_sid
     try:
-        session = await sync_to_async(
-            lambda: CallSession.objects.filter(call_sid=call_sid).first()
-        )()
-        candidate = await sync_to_async(CampaignCandidate.objects.get)(id=candidate_id)
+        session = await _bg(lambda: CallSession.objects.filter(call_sid=sid).first())()
+        candidate = await _bg(CampaignCandidate.objects.get)(id=candidate_id)
 
         if not session:
             candidate.status = CampaignCandidate.FAILED
-            await sync_to_async(candidate.save)(update_fields=["status"])
+            await _bg(candidate.save)(update_fields=["status"])
             return
 
         if session.created_at and session.ended_at:
             candidate.call_duration = int((session.ended_at - session.created_at).total_seconds())
 
-        candidate.call_outcome  = session.call_outcome or ""
+        candidate.call_outcome   = session.call_outcome or ""
         candidate.interest_level = session.call_outcome or ""
-        candidate.transcript    = session.transcript or []
-        candidate.notes         = session.notes or {}
-        candidate.ended_at      = session.ended_at
+        candidate.transcript     = session.transcript or []
+        candidate.notes          = session.notes or {}
+        candidate.ended_at       = session.ended_at
 
         if session.notes:
             bullets = session.notes.get("summary_bullets", [])
             candidate.ai_summary = " | ".join(bullets[:3]) if bullets else ""
 
         candidate.status = CampaignCandidate.COMPLETED
-        await sync_to_async(candidate.save)(update_fields=[
+        await _bg(candidate.save)(update_fields=[
             "status", "call_duration", "call_outcome", "interest_level",
             "transcript", "notes", "ai_summary", "ended_at",
         ])
@@ -585,7 +591,7 @@ async def resume_running_campaigns() -> None:
     """Called once on ASGI startup. Re-creates tasks for any RUNNING campaigns."""
     from .models import Campaign, CampaignCandidate
     try:
-        running_ids = await sync_to_async(
+        running_ids = await _bg(
             lambda: list(Campaign.objects.filter(status=Campaign.RUNNING).values_list("id", flat=True))
         )()
         for cid in running_ids:
@@ -593,7 +599,7 @@ async def resume_running_campaigns() -> None:
             if existing and not existing.done():
                 continue  # Already running (shouldn't happen on fresh start, but be safe)
             # Reset any CALLING candidates stuck from the last interrupted run
-            reset = await sync_to_async(
+            reset = await _bg(
                 CampaignCandidate.objects.filter(
                     campaign_id=cid, status=CampaignCandidate.CALLING,
                 ).update
