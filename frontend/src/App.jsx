@@ -7,12 +7,13 @@ import LandingPage from './pages/LandingPage';
 import AboutPage from './pages/AboutPage';
 import FeaturesPage from './pages/FeaturesPage';
 import DashboardPage from './pages/DashboardPage';
+import CampaignPage from './pages/CampaignPage';
 import VoiceChat from './components/VoiceChat';
 import CustomCursor from './components/CustomCursor';
 
 function AnimatedRoutes() {
   const location = useLocation();
-  
+
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
@@ -20,6 +21,7 @@ function AnimatedRoutes() {
         <Route path="/about" element={<AboutPage />} />
         <Route path="/features" element={<FeaturesPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/campaign" element={<CampaignPage />} />
         <Route path="/app" element={<VoiceChat />} />
       </Routes>
     </AnimatePresence>
