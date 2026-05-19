@@ -288,7 +288,11 @@ async def start_campaign(request, campaign_id):
         return JsonResponse({"error": "Campaign not found"}, status=404)
 
     if campaign.status == Campaign.RUNNING:
-        return JsonResponse({"error": "Campaign is already running"}, status=400)
+        # Allow re-start if the task died (e.g. container restart wiped _CAMPAIGN_TASKS)
+        existing = _CAMPAIGN_TASKS.get(campaign_id)
+        if existing and not existing.done():
+            return JsonResponse({"error": "Campaign is already running"}, status=400)
+        # Task is gone — fall through and re-create it
     if campaign.valid_count == 0:
         return JsonResponse({"error": "No valid candidates to call"}, status=400)
 
@@ -570,6 +574,35 @@ async def _sync_call_result(candidate_id: int, call_sid: str) -> None:
         logger.info("[Campaign] Synced %s → outcome=%s", candidate.name, candidate.call_outcome)
     except Exception as exc:
         logger.error("[Campaign] Sync error candidate_id=%d: %s", candidate_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Startup auto-resume — re-launch tasks for campaigns that were RUNNING when
+# the container last restarted (their asyncio tasks were wiped from memory).
+# ---------------------------------------------------------------------------
+
+async def resume_running_campaigns() -> None:
+    """Called once on ASGI startup. Re-creates tasks for any RUNNING campaigns."""
+    from .models import Campaign, CampaignCandidate
+    try:
+        running_ids = await sync_to_async(
+            lambda: list(Campaign.objects.filter(status=Campaign.RUNNING).values_list("id", flat=True))
+        )()
+        for cid in running_ids:
+            existing = _CAMPAIGN_TASKS.get(cid)
+            if existing and not existing.done():
+                continue  # Already running (shouldn't happen on fresh start, but be safe)
+            # Reset any CALLING candidates stuck from the last interrupted run
+            reset = await sync_to_async(
+                CampaignCandidate.objects.filter(
+                    campaign_id=cid, status=CampaignCandidate.CALLING,
+                ).update
+            )(status=CampaignCandidate.PENDING)
+            logger.info("[Startup] Resuming campaign %d (reset %d CALLING→PENDING)", cid, reset)
+            task = asyncio.create_task(_run_campaign_caller(cid))
+            _CAMPAIGN_TASKS[cid] = task
+    except Exception as exc:
+        logger.error("[Startup] Failed to resume running campaigns: %s", exc)
 
 
 # ---------------------------------------------------------------------------
