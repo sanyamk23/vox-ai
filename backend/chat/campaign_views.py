@@ -296,6 +296,17 @@ async def start_campaign(request, campaign_id):
     campaign.started_at = campaign.started_at or timezone.now()
     await sync_to_async(campaign.save)(update_fields=["status", "started_at"])
 
+    # Reset any candidates stuck in CALLING state from a previous interrupted run
+    from .models import CampaignCandidate
+    reset_count = await sync_to_async(
+        CampaignCandidate.objects.filter(
+            campaign_id=campaign_id,
+            status=CampaignCandidate.CALLING,
+        ).update
+    )(status=CampaignCandidate.PENDING)
+    if reset_count:
+        logger.info("[Campaign-%d] Reset %d stuck CALLING candidate(s) to PENDING", campaign_id, reset_count)
+
     # Launch background caller (idempotent — cancel old task first)
     old = _CAMPAIGN_TASKS.get(campaign_id)
     if old and not old.done():
@@ -487,15 +498,26 @@ async def _run_campaign_caller(campaign_id: int) -> None:
 
 
 async def _wait_for_call_end(call_sid: str, timeout: int = 480) -> None:
-    from .models import CallSession
+    from .models import CallSession, CampaignCandidate
+    sid = call_sid  # avoid late-binding issues in lambdas
     for _ in range(timeout // 5):
         await asyncio.sleep(5)
-        done = await sync_to_async(
-            lambda: CallSession.objects.filter(call_sid=call_sid)
+        # Primary signal: ended_at stamped by finalize or status webhook
+        ended_at = await sync_to_async(
+            lambda: CallSession.objects.filter(call_sid=sid)
                                        .values_list("ended_at", flat=True)
                                        .first()
         )()
-        if done is not None:
+        if ended_at is not None:
+            return
+        # Secondary signal: webhook already moved candidate out of CALLING state
+        candidate_status = await sync_to_async(
+            lambda: CampaignCandidate.objects.filter(call_sid=sid)
+                                             .values_list("status", flat=True)
+                                             .first()
+        )()
+        if candidate_status and candidate_status != CampaignCandidate.CALLING:
+            logger.info("[Campaign] Call %s — candidate status=%s, not waiting further", sid, candidate_status)
             return
     logger.warning("[Campaign] Call %s timed out after %ds", call_sid, timeout)
 
