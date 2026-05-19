@@ -423,36 +423,39 @@ async def _run_campaign_caller(campaign_id: int) -> None:
             await sync_to_async(Campaign.objects.filter(id=campaign_id).update)(status=Campaign.PAUSED)
             return
 
+        cid = campaign_id  # stable local for lambdas in this scope
         while True:
-            campaign = await sync_to_async(Campaign.objects.get)(id=campaign_id)
+            campaign = await sync_to_async(Campaign.objects.get)(id=cid)
             if campaign.status != Campaign.RUNNING:
-                logger.info("[Campaign-%d] Status=%s — stopping", campaign_id, campaign.status)
+                logger.info("[Campaign-%d] Status=%s — stopping", cid, campaign.status)
                 break
 
-            # Next pending candidate
+            # Next pending candidate — explicit order so we always call in upload order
             candidate = await sync_to_async(
                 lambda: CampaignCandidate.objects.filter(
-                    campaign_id=campaign_id,
+                    campaign_id=cid,
                     is_valid=True,
                     is_duplicate=False,
                     status=CampaignCandidate.PENDING,
-                ).first()
+                ).order_by("id").first()
             )()
 
             if candidate is None:
-                logger.info("[Campaign-%d] All candidates processed — marking completed", campaign_id)
-                await sync_to_async(Campaign.objects.filter(id=campaign_id).update)(
+                logger.info("[Campaign-%d] All candidates processed — marking completed", cid)
+                await sync_to_async(Campaign.objects.filter(id=cid).update)(
                     status=Campaign.COMPLETED,
                     completed_at=timezone.now(),
                 )
                 break
+
+            logger.info("[Campaign-%d] Next candidate: %s (%s)", cid, candidate.name, candidate.phone)
 
             # Mark as calling
             candidate.status    = CampaignCandidate.CALLING
             candidate.called_at = timezone.now()
             await sync_to_async(candidate.save)(update_fields=["status", "called_at"])
 
-            call_sid = None
+            call_sid = ""
             try:
                 from .views import _place_call
                 result = await sync_to_async(_place_call)(
@@ -463,32 +466,36 @@ async def _run_campaign_caller(campaign_id: int) -> None:
                     name=candidate.name,
                     voice_id=campaign.voice_id,
                 )
-                call_sid = result.get("call_sid", "")
+                call_sid = result.get("call_sid") or ""
+                if not call_sid:
+                    raise RuntimeError("_place_call returned no call_sid")
+
                 candidate.call_sid = call_sid
                 await sync_to_async(candidate.save)(update_fields=["call_sid"])
 
                 # Store link so the status webhook can update the candidate
                 await sync_to_async(cache.set)(
                     f"vox:campaign_call:{call_sid}",
-                    {"campaign_id": campaign_id, "candidate_id": candidate.id},
+                    {"campaign_id": cid, "candidate_id": candidate.id},
                     timeout=3600,
                 )
-                logger.info("[Campaign-%d] Calling %s → SID %s", campaign_id, candidate.name, call_sid)
+                logger.info("[Campaign-%d] Placed call to %s → SID %s", cid, candidate.name, call_sid)
 
                 # Wait for call to finish before dialling the next candidate
                 await _wait_for_call_end(call_sid, timeout=600)
+                logger.info("[Campaign-%d] Call ended for %s (SID %s)", cid, candidate.name, call_sid)
                 await _sync_call_result(candidate.id, call_sid)
 
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error("[Campaign-%d] Call error for %s: %s", campaign_id, candidate.name, exc)
+                logger.error("[Campaign-%d] Call failed for %s: %s", cid, candidate.name, exc, exc_info=True)
                 candidate.status = CampaignCandidate.FAILED
                 await sync_to_async(candidate.save)(update_fields=["status"])
 
             # Brief pause between calls
             delay = campaign.delay_seconds
-            logger.info("[Campaign-%d] Waiting %ds before next call", campaign_id, delay)
+            logger.info("[Campaign-%d] Sleeping %ds before next candidate", cid, delay)
             await asyncio.sleep(delay)
 
     except asyncio.CancelledError:
@@ -498,28 +505,35 @@ async def _run_campaign_caller(campaign_id: int) -> None:
 
 
 async def _wait_for_call_end(call_sid: str, timeout: int = 480) -> None:
+    """Poll until the call ends, using two independent signals."""
     from .models import CallSession, CampaignCandidate
-    sid = call_sid  # avoid late-binding issues in lambdas
-    for _ in range(timeout // 5):
-        await asyncio.sleep(5)
-        # Primary signal: ended_at stamped by finalize or status webhook
-        ended_at = await sync_to_async(
-            lambda: CallSession.objects.filter(call_sid=sid)
-                                       .values_list("ended_at", flat=True)
-                                       .first()
-        )()
-        if ended_at is not None:
+    sid = call_sid
+
+    def _check_ended():
+        ended = (
+            CallSession.objects.filter(call_sid=sid)
+                               .values_list("ended_at", flat=True)
+                               .first()
+        )
+        if ended is not None:
+            return True
+        # Secondary: webhook already moved candidate out of CALLING
+        status = (
+            CampaignCandidate.objects.filter(call_sid=sid)
+                                     .values_list("status", flat=True)
+                                     .first()
+        )
+        return bool(status and status != CampaignCandidate.CALLING)
+
+    elapsed = 0
+    poll = 3  # check every 3 seconds — faster response
+    while elapsed < timeout:
+        await asyncio.sleep(poll)
+        elapsed += poll
+        if await sync_to_async(_check_ended)():
+            logger.info("[Campaign] Call %s ended after ~%ds", sid, elapsed)
             return
-        # Secondary signal: webhook already moved candidate out of CALLING state
-        candidate_status = await sync_to_async(
-            lambda: CampaignCandidate.objects.filter(call_sid=sid)
-                                             .values_list("status", flat=True)
-                                             .first()
-        )()
-        if candidate_status and candidate_status != CampaignCandidate.CALLING:
-            logger.info("[Campaign] Call %s — candidate status=%s, not waiting further", sid, candidate_status)
-            return
-    logger.warning("[Campaign] Call %s timed out after %ds", call_sid, timeout)
+    logger.warning("[Campaign] Call %s timed out after %ds — moving on", sid, timeout)
 
 
 async def _sync_call_result(candidate_id: int, call_sid: str) -> None:
