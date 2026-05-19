@@ -76,7 +76,6 @@ class Campaign(models.Model):
     job_description = models.TextField(blank=True, default='')
     voice_id = models.CharField(max_length=50, default='priya')
     delay_seconds = models.IntegerField(default=30)
-    max_retries = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
 
     total_uploaded = models.IntegerField(default=0)
@@ -135,7 +134,6 @@ class CampaignCandidate(models.Model):
     notes = models.JSONField(default=dict)
     ai_summary = models.TextField(blank=True, default='')
     interest_level = models.CharField(max_length=30, blank=True, default='')
-    retry_count = models.IntegerField(default=0)
 
     is_valid = models.BooleanField(default=True)
     is_duplicate = models.BooleanField(default=False)
