@@ -1,7 +1,4 @@
-"""
-Vox AI — FastAPI backend.
-Replaces Django + Django Channels + Daphne with FastAPI + SQLAlchemy + Uvicorn.
-"""
+"""Vox AI — FastAPI backend (SQLAlchemy async + redis.asyncio + Uvicorn)."""
 from __future__ import annotations
 
 import asyncio

@@ -1,4 +1,4 @@
-"""Async Redis cache with a Django-compatible interface."""
+"""Async Redis cache — thin wrapper around redis.asyncio."""
 import json
 from typing import Any, Optional
 
