@@ -753,9 +753,9 @@ async def _sync_campaign_candidate(call_sid: str) -> None:
     if not call_sid:
         return
     try:
-        from django.core.cache import cache
-        from .campaign_views import _sync_call_result
-        campaign_call = cache.get(f"vox:campaign_call:{call_sid}")
+        from cache import cache
+        from main import _sync_call_result
+        campaign_call = await cache.get(f"vox:campaign_call:{call_sid}")
         if campaign_call:
             candidate_id = campaign_call.get("candidate_id")
             if candidate_id:
@@ -782,31 +782,35 @@ async def finalize_gemini_session(
     Populates all DB fields including dimension_scores and eval_confidence.
     Always sets ended_at so the session_status poll resolves correctly.
     """
-    from .models import CallSession
-    from django.utils import timezone
+    from datetime import datetime, timezone as _tz
+    from sqlalchemy import update as _update, select as _select
+    from database import AsyncSessionLocal
+    from models import CallSession
+
+    _now = lambda: datetime.now(_tz.utc)
 
     async def _mark_ended(outcome: str = "", extra: dict | None = None) -> None:
-        """Minimal DB update — always sets ended_at so polling stops."""
         if not call_sid:
             return
         try:
-            fields: dict = {"ended_at": timezone.now()}
+            vals: dict = {"ended_at": _now()}
             if outcome:
-                fields["call_outcome"] = outcome
+                vals["call_outcome"] = outcome
             if extra:
-                fields.update(extra)
-            await CallSession.objects.filter(call_sid=call_sid).aupdate(**fields)
+                vals.update(extra)
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    _update(CallSession).where(CallSession.call_sid == call_sid).values(**vals)
+                )
+                await db.commit()
         except Exception as db_err:
             logger.error("[Finalize] DB mark-ended failed: %s", db_err)
 
     if not transcript:
-        # Candidate didn't answer or call was too short to produce transcript.
-        # Mark the pre-created session as ended so the frontend poll resolves.
         await _mark_ended(outcome="BUSY")
         await _sync_campaign_candidate(call_sid)
         return
 
-    # Convert raw "AI: ..." / "USER: ..." lines → chat-dict format the evaluator expects
     chat_transcript = [
         {
             "role": "assistant" if line.startswith("AI:") else "user",
@@ -848,7 +852,6 @@ async def finalize_gemini_session(
         report = await evaluator.run_with_guardrails(chat_transcript, {}, context)
         report_dict = report.to_dict()
 
-        # Run SummaryAgent — evaluate candidate vs role requirements
         summarizer = SummaryAgent(gemini_client=client)
         summarizer.timeout_seconds = 30.0
         summarizer.max_retries = 1
@@ -863,30 +866,52 @@ async def finalize_gemini_session(
             if getattr(report, k) is not None
         }
 
-        session_fields = dict(
-            candidate_name=candidate_name,
-            candidate_phone=candidate_phone,
-            job_description=job_description,
-            resume_text=resume_text,
-            transcript=chat_transcript,
-            notes=report_dict,
-            summary=summary_text,
-            intent_score=report.intent_score,
-            call_outcome=report.call_outcome,
-            call_channel=call_channel,
-            ended_at=timezone.now(),
-            interview_context=context.to_dict() if hasattr(context, "to_dict") else {},
-            dimension_scores=dim_scores,
-            eval_confidence=report.overall_confidence,
-            eval_reasoning=report.reasoning,
-            candidate_summary=summary_dict,
-        )
+        now = _now()
         if call_sid:
-            await CallSession.objects.aupdate_or_create(
-                call_sid=call_sid,
-                defaults=session_fields,
-            )
-        # No call_sid — web-only session with no Twilio leg; no DB record to update.
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    _select(CallSession).where(CallSession.call_sid == call_sid)
+                )
+                session_obj = result.scalars().first()
+                if session_obj:
+                    session_obj.candidate_name = candidate_name
+                    session_obj.candidate_phone = candidate_phone
+                    session_obj.job_description = job_description
+                    session_obj.resume_text = resume_text
+                    session_obj.transcript = chat_transcript
+                    session_obj.notes = report_dict
+                    session_obj.summary = summary_text
+                    session_obj.intent_score = report.intent_score
+                    session_obj.call_outcome = report.call_outcome
+                    session_obj.call_channel = call_channel
+                    session_obj.ended_at = now
+                    session_obj.interview_context = context.to_dict() if hasattr(context, "to_dict") else {}
+                    session_obj.dimension_scores = dim_scores
+                    session_obj.eval_confidence = report.overall_confidence
+                    session_obj.eval_reasoning = report.reasoning
+                    session_obj.candidate_summary = summary_dict
+                else:
+                    db.add(CallSession(
+                        call_sid=call_sid,
+                        candidate_name=candidate_name,
+                        candidate_phone=candidate_phone,
+                        job_description=job_description,
+                        resume_text=resume_text,
+                        transcript=chat_transcript,
+                        notes=report_dict,
+                        summary=summary_text,
+                        intent_score=report.intent_score,
+                        call_outcome=report.call_outcome,
+                        call_channel=call_channel,
+                        ended_at=now,
+                        interview_context=context.to_dict() if hasattr(context, "to_dict") else {},
+                        dimension_scores=dim_scores,
+                        eval_confidence=report.overall_confidence,
+                        eval_reasoning=report.reasoning,
+                        candidate_summary=summary_dict,
+                    ))
+                await db.commit()
+
         logger.info(
             "[Vox] Session saved — Score:%s Outcome:%s Compat:%s Evaluator:%s",
             report.intent_score, report.call_outcome,
@@ -896,7 +921,6 @@ async def finalize_gemini_session(
 
     except Exception as e:
         logger.error("[Finalize-Error] %s", e, exc_info=True)
-        # Always mark ended_at so the frontend poll doesn't loop forever.
         await _mark_ended(
             outcome="CONFUSED",
             extra={"transcript": chat_transcript, "notes": {

@@ -26,7 +26,7 @@ import re
 import time
 from typing import TYPE_CHECKING
 
-from django.core.cache import cache
+from cache import cache
 
 if TYPE_CHECKING:
     pass
@@ -123,23 +123,23 @@ class CallRetryManager:
         return f"{_RETRY_KEY_PREFIX}{phone.strip()}"
 
     @classmethod
-    def load(cls, phone: str) -> dict:
-        return cache.get(cls._key(phone)) or {}
+    async def load(cls, phone: str) -> dict:
+        return (await cache.get(cls._key(phone))) or {}
 
     @classmethod
-    def save(cls, phone: str, state: dict) -> None:
-        cache.set(cls._key(phone), state, timeout=_RETRY_TTL_SECONDS)
+    async def save(cls, phone: str, state: dict) -> None:
+        await cache.set(cls._key(phone), state, timeout=_RETRY_TTL_SECONDS)
 
     @classmethod
-    def clear(cls, phone: str) -> None:
-        cache.delete(cls._key(phone))
+    async def clear(cls, phone: str) -> None:
+        await cache.delete(cls._key(phone))
 
     @classmethod
-    def retry_count(cls, phone: str) -> int:
-        return cls.load(phone).get("count", 0)
+    async def retry_count(cls, phone: str) -> int:
+        return (await cls.load(phone)).get("count", 0)
 
     @classmethod
-    def record_drop(
+    async def record_drop(
         cls,
         phone: str,
         name: str,
@@ -154,17 +154,14 @@ class CallRetryManager:
         Saves the dropped call's context and returns the NEW retry number
         (i.e. which attempt number the *next* call will be).
         """
-        state = cls.load(phone)
+        state = await cls.load(phone)
         prior_lines = state.get("transcript", [])
 
-        # Sanitize incoming transcript before merging to block injection carry-over
         clean_transcript = [_sanitize_transcript_line(l) for l in transcript if isinstance(l, str)]
-
-        # Accumulate transcript across retries so context grows with each call
         combined = (prior_lines + clean_transcript)[-_MAX_PRIOR_LINES:]
 
         new_count = state.get("count", 0) + 1
-        cls.save(phone, {
+        await cls.save(phone, {
             "count":            new_count,
             "transcript":       combined,
             "notes":            notes,
@@ -286,22 +283,9 @@ class CallRetryManager:
             host_url=host_url, from_number=from_number,
         )
 
-        try:
-            # Async context (TwilioConsumer._handle_call_ended) — create task on running loop
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(coro, name=task_name)
-            _PENDING_RETRY_TASKS.add(task)
-            task.add_done_callback(_PENDING_RETRY_TASKS.discard)
-        except RuntimeError:
-            # Sync context (Django sync view like call_status_webhook running in thread executor)
-            # asyncio.create_task requires a running loop — use a daemon thread with its own loop.
-            import threading
-
-            def _run_in_thread() -> None:
-                asyncio.run(coro)
-
-            t = threading.Thread(target=_run_in_thread, daemon=True, name=task_name)
-            t.start()
+        task = asyncio.get_running_loop().create_task(coro, name=task_name)
+        _PENDING_RETRY_TASKS.add(task)
+        task.add_done_callback(_PENDING_RETRY_TASKS.discard)
 
         logger.info(
             "[Retry] Callback #%d scheduled for %s in %.0fs",
@@ -330,24 +314,19 @@ class CallRetryManager:
             await asyncio.sleep(delay_seconds)
 
         try:
-            loop = asyncio.get_running_loop()
-            # _place_call is sync (Twilio SDK) — run in executor to not block the loop
-            from .views import _place_call   # local import avoids circular deps at module level
-            await loop.run_in_executor(
-                None,
-                lambda: _place_call(
-                    to_number=phone,
-                    from_number=from_number,
-                    host_url=host_url,
-                    jd=jd,
-                    name=name,
-                    resume_text=resume_text,
-                    recruiter_inputs=recruiter_inputs or {},
-                    voice_id=voice_id,
-                    retry_num=retry_num,
-                    prior_transcript=transcript[-_MAX_PRIOR_LINES:],
-                    prior_notes=notes,
-                ),
+            from main import _place_call   # local import avoids circular deps at module level
+            await _place_call(
+                to_number=phone,
+                from_number=from_number,
+                host_url=host_url,
+                jd=jd,
+                name=name,
+                resume_text=resume_text,
+                recruiter_inputs=recruiter_inputs or {},
+                voice_id=voice_id,
+                retry_num=retry_num,
+                prior_transcript=transcript[-_MAX_PRIOR_LINES:],
+                prior_notes=notes,
             )
             logger.info("[Retry] Call #%d placed to %s", retry_num, phone)
         except Exception as exc:
