@@ -1,8 +1,4 @@
 #!/bin/bash
 set -e
-echo "[Vox] Running database migrations..."
-python manage.py migrate --no-input
-echo "[Vox] Collecting static files..."
-python manage.py collectstatic --no-input
-echo "[Vox] Starting Daphne..."
-exec daphne -b 0.0.0.0 -p 8000 backend.asgi:application
+echo "[Vox] Starting Uvicorn..."
+exec uvicorn main:app --host 0.0.0.0 --port 8000
