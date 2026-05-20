@@ -15,11 +15,6 @@ variable "repo_url" {
   type        = string
 }
 
-variable "domain" {
-  description = "Domain pointing at the server (e.g. app.example.com). Used for Caddy SSL, Django ALLOWED_HOSTS, and CSRF config."
-  type        = string
-}
-
 variable "twilio_account_sid" {
   description = "Twilio Account SID (starts with AC...)"
   type        = string
@@ -42,10 +37,9 @@ variable "gemini_api_key" {
   sensitive   = true
 }
 
-variable "django_secret_key" {
-  description = "Django SECRET_KEY. Generate with: python -c \"from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())\""
+variable "domain" {
+  description = "Public domain name for the app (e.g. clarix-ai.duckdns.org)"
   type        = string
-  sensitive   = true
 }
 
 variable "duckdns_token" {
