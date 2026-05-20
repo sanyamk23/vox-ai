@@ -13,7 +13,7 @@ from .schemas import InterviewContext
 
 logger = logging.getLogger(__name__)
 
-_GEMINI_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.5-flash")
+_GEMINI_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.0-flash")
 
 _JD_PARSE_SYSTEM = """\
 You are an expert talent acquisition analyst. Parse the job description and return structured JSON.

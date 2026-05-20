@@ -107,7 +107,7 @@ def _gemini_api_key() -> str:
 
 # Verified via API: gemini-3.1-flash-live-preview (user's Live API model)
 GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
-GEMINI_SUMMARY_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.5-flash")
+GEMINI_SUMMARY_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.0-flash")
 GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Kore")
 GEMINI_VOICE_LANGUAGE = os.getenv("GEMINI_VOICE_LANGUAGE", "en-IN")  # Indian English accent
 

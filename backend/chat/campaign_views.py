@@ -490,7 +490,7 @@ async def _run_campaign_caller(campaign_id: int) -> None:
                     to_number=candidate.phone,
                     from_number=from_number,
                     host_url=host_url,
-                    jd=campaign.job_description or "Screening call",
+                    jd=campaign.job_description or "General screening call for open positions at our company.",
                     name=candidate.name,
                     voice_id=campaign.voice_id,
                 )
