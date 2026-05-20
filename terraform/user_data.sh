@@ -74,14 +74,18 @@ echo "==> Using domain: $DOMAIN  (IP: $IP_PLAIN)"
 
 echo "==> Writing .env"
 cat > /app/.env <<'ENVEOF'
-# ── Django ────────────────────────────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────────────────────
 DEBUG=False
 LOG_LEVEL=INFO
-CHAT_LOG_LEVEL=INFO
-DJANGO_SECRET_KEY=${django_secret_key}
-ALLOWED_HOSTS=__DOMAIN__,__IP__,localhost,127.0.0.1,backend
-CSRF_TRUSTED_ORIGINS=https://__DOMAIN__,http://__IP__
-CORS_ALLOWED_ORIGINS=https://__DOMAIN__,http://__IP__
+
+# ── Database (matches docker-compose postgres service) ────────────────────────
+DATABASE_URL=postgresql://vox_user:vox_pass@db:5432/vox_db
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+REDIS_URL=redis://redis:6379/0
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+ALLOWED_ORIGINS=https://__DOMAIN__,http://__IP__
 
 # ── Twilio ────────────────────────────────────────────────────────────────────
 TWILIO_ACCOUNT_SID=${twilio_account_sid}
@@ -94,7 +98,7 @@ GEMINI_API_KEY=${gemini_api_key}
 # ── Public URL (used by backend to build Twilio WSS callback URLs) ────────────
 PUBLIC_URL=https://__DOMAIN__
 
-# ── Frontend — leave blank so window.location.origin is used automatically ───
+# ── Frontend ──────────────────────────────────────────────────────────────────
 VITE_API_BASE_URL=
 ENVEOF
 
