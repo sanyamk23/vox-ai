@@ -244,24 +244,41 @@ def create_campaign(request):
 
 
 @require_http_methods(["GET"])
-def get_campaign(request, campaign_id):
+async def get_campaign(request, campaign_id):
     """GET /api/campaigns/<id>/"""
-    from .models import Campaign
+    from .models import Campaign, CampaignCandidate
     try:
-        campaign = Campaign.objects.get(id=campaign_id)
+        campaign = await _bg(Campaign.objects.get)(id=campaign_id)
     except Campaign.DoesNotExist:
         return JsonResponse({"error": "Campaign not found"}, status=404)
 
-    candidates = list(
+    # Auto-resume: if campaign is RUNNING but the task died (container restart),
+    # self-heal on every frontend poll instead of waiting for manual re-start.
+    if campaign.status == Campaign.RUNNING:
+        existing = _CAMPAIGN_TASKS.get(campaign_id)
+        if not existing or existing.done():
+            cid = campaign_id
+            reset = await _bg(
+                CampaignCandidate.objects.filter(
+                    campaign_id=cid, status=CampaignCandidate.CALLING,
+                ).update
+            )(status=CampaignCandidate.PENDING)
+            task = asyncio.create_task(_run_campaign_caller(cid))
+            _CAMPAIGN_TASKS[cid] = task
+            logger.info("[Campaign-%d] Auto-resumed via GET poll (reset %d CALLING→PENDING)", cid, reset)
+
+    candidates = await _bg(lambda: list(
         campaign.candidates
         .filter(is_valid=True, is_duplicate=False)
         .values("id", "name", "phone", "status", "call_outcome",
                 "interest_level", "call_duration", "ai_summary", "called_at", "ended_at")
-    )
+    ))()
     # Serialise datetimes
     for c in candidates:
         c["called_at"] = c["called_at"].isoformat() if c["called_at"] else None
         c["ended_at"]  = c["ended_at"].isoformat()  if c["ended_at"]  else None
+
+    stats = await _bg(lambda: campaign.stats)()
 
     return JsonResponse({
         "id": campaign.id,
@@ -276,7 +293,7 @@ def get_campaign(request, campaign_id):
             "invalid": campaign.invalid_count,
             "duplicates": campaign.duplicate_count,
         },
-        "stats": campaign.stats,
+        "stats": stats,
         "candidates": candidates,
         "created_at": campaign.created_at.isoformat(),
         "started_at": campaign.started_at.isoformat() if campaign.started_at else None,
