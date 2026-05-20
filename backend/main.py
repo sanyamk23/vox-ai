@@ -5,13 +5,11 @@ import asyncio
 import io
 import json
 import logging
-import os
 import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone as _tz
-from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,10 +66,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Vox AI", lifespan=lifespan)
 
+_origins = settings.allowed_origins_list()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins_list(),
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=(_origins != ["*"]),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,7 +124,7 @@ def _get_client_ip(request: Request) -> str:
     if xff:
         ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
         if ips:
-            return ips[-1]
+            return ips[0]
     return request.client.host if request.client else "unknown"
 
 
@@ -400,9 +399,9 @@ async def outgoing_call(request: Request):
     except Exception:
         body = {}
 
-    to_number = (request.query_params.get("to_number") or body.get("to_number") or body.get("phone") or "").strip()
-    from_number = (request.query_params.get("from_number") or body.get("from_number") or settings.TWILIO_PHONE_NUMBER).strip()
-    host_url = (request.query_params.get("host_url") or body.get("host_url") or settings.PUBLIC_URL).strip()
+    to_number = str(request.query_params.get("to_number") or body.get("to_number") or body.get("phone") or "").strip()
+    from_number = str(request.query_params.get("from_number") or body.get("from_number") or settings.TWILIO_PHONE_NUMBER).strip()
+    host_url = str(request.query_params.get("host_url") or body.get("host_url") or settings.PUBLIC_URL).strip()
 
     if not to_number or not _validate_e164(to_number):
         raise HTTPException(status_code=400, detail="to_number must be E.164")
@@ -427,8 +426,10 @@ async def call_status_webhook(request: Request):
     params = dict(form)
 
     public_url = settings.PUBLIC_URL.strip().rstrip("/")
-    path = request.url.path.lstrip("/")
-    url = f"https://{_clean_host(public_url)}/{path}" if public_url else str(request.url)
+    path = request.url.path
+    qs = request.url.query
+    _base = f"https://{_clean_host(public_url)}{path}" if public_url else str(request.url).split("?")[0]
+    url = f"{_base}?{qs}" if qs else _base
     sig = request.headers.get("x-twilio-signature", "")
     if not _verify_twilio_signature(url, params, sig):
         return Response(status_code=403)
@@ -445,14 +446,15 @@ async def call_status_webhook(request: Request):
             if cand_id:
                 try:
                     failed = {"no-answer", "busy", "failed", "canceled"}
-                    new_st = CampaignCandidate.FAILED if call_status in failed else CampaignCandidate.COMPLETED
-                    async with AsyncSessionLocal() as db:
-                        await db.execute(
-                            update(CampaignCandidate)
-                            .where(CampaignCandidate.id == cand_id)
-                            .values(status=new_st)
-                        )
-                        await db.commit()
+                    if call_status in failed:
+                        async with AsyncSessionLocal() as db:
+                            await db.execute(
+                                update(CampaignCandidate)
+                                .where(CampaignCandidate.id == cand_id)
+                                .values(status=CampaignCandidate.FAILED)
+                            )
+                            await db.commit()
+                    # "completed" is handled by _sync_call_result after evaluation
                 except Exception as _ce:
                     logger.warning("[CallStatus] Failed to update campaign candidate: %s", _ce)
 
@@ -462,7 +464,7 @@ async def call_status_webhook(request: Request):
                 await db.execute(
                     update(CallSession)
                     .where(CallSession.call_sid == call_sid, CallSession.ended_at == None)
-                    .values(ended_at=_now(), call_outcome="COMPLETED")
+                    .values(ended_at=_now())
                 )
                 await db.commit()
         except Exception as _ce:
@@ -491,8 +493,8 @@ async def call_status_webhook(request: Request):
 
     session = await cache.get(f"vox:call:{call_sid}")
     if not session:
-        logger.warning("[CallStatus] No session data for CallSid=%s", call_sid)
-        return Response(status_code=500)
+        logger.warning("[CallStatus] No session data for CallSid=%s — skipping retry", call_sid)
+        return Response(status_code=204)
 
     phone = session.get("phone", "")
     name = session.get("name", "Candidate")

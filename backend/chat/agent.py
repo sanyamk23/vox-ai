@@ -829,6 +829,7 @@ async def finalize_gemini_session(
     except Exception as _import_err:
         logger.error("[Finalize] Import error — cannot evaluate, marking ended: %s", _import_err)
         await _mark_ended(outcome="CONFUSED", extra={"transcript": chat_transcript})
+        await _sync_campaign_candidate(call_sid)
         return
 
     api_key = _gemini_api_key()

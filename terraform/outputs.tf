@@ -18,11 +18,6 @@ output "twilio_voice_webhook" {
   value       = "https://${var.domain}/outgoing-call/"
 }
 
-output "admin_url" {
-  description = "Django admin panel (internal use only)"
-  value       = "https://${var.domain}/admin/"
-}
-
 output "next_steps" {
   description = "Post-deploy checklist printed after terraform apply"
   value       = <<-EOT

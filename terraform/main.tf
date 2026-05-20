@@ -110,7 +110,6 @@ resource "aws_instance" "app" {
     twilio_auth_token   = var.twilio_auth_token
     twilio_phone_number = var.twilio_phone_number
     gemini_api_key      = var.gemini_api_key
-    django_secret_key   = var.django_secret_key
   })
 
   tags = { Name = "vox-ai-app" }
